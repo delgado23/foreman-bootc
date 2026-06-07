@@ -62,6 +62,19 @@ COPY kubernetes/files/containerd-config.toml /etc/containerd/config.toml
 RUN sed -i 's/^FirewallBackend=.*/FirewallBackend=iptables/' /etc/firewalld/firewalld.conf \
  && grep -q '^FirewallBackend=iptables' /etc/firewalld/firewalld.conf
 
+# --- CNI plugin bin dir on writable /var ------------------------------------
+# kubernetes-cni installs the base CNI plugins to /opt/cni/bin, but on an ostree
+# host the deployment root (incl. /opt) is read-only, so flannel's
+# install-cni-plugin initContainer can't add its plugin there and the CNI never
+# initializes (nodes NotReady, flannel pod Init:CrashLoopBackOff). Stash the base
+# plugins read-only in /usr/lib/cni and redirect /opt/cni/bin to the writable
+# /var/opt/cni/bin (seeded at boot by cni-bin-seed.service). containerd's CNI
+# bin_dir (/opt/cni/bin) and the upstream flannel manifest stay unchanged.
+COPY kubernetes/files/cni-bin-seed.service /usr/lib/systemd/system/cni-bin-seed.service
+RUN mv /opt/cni/bin /usr/lib/cni \
+ && ln -s /var/opt/cni/bin /opt/cni/bin \
+ && systemctl enable cni-bin-seed.service
+
 # --- flexvolume dir (kube-controller-manager hostPath) ----------------------
 # kubeadm's kube-controller-manager static pod mounts
 # /usr/libexec/kubernetes/kubelet-plugins/volume/exec as a hostPath with
