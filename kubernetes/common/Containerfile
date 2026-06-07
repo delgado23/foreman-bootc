@@ -39,7 +39,6 @@ RUN subscription-manager register --org Garaventaville --activationkey 'AlmaLinu
         containerd \
         firewalld \
         cri-tools \
-        ocl-icd \
         kubelet-${K8S_VERSION} \
         kubeadm-${K8S_VERSION} \
         kubectl-${K8S_VERSION} \
@@ -94,14 +93,6 @@ RUN mv /opt/cni/bin /usr/lib/cni \
 # refused"). Bake the directory so it already exists (read-only is fine —
 # flexvolume is deprecated/unused here, CSI handles storage).
 RUN mkdir -p /usr/libexec/kubernetes/kubelet-plugins/volume/exec
-
-# --- Disable kdump ----------------------------------------------------------
-# kdump.service fails on these nodes ("No memory reserved for crash kernel":
-# crashkernel reservation yields kexec_crash_size=0 on the small-RAM EFI VMs),
-# leaving a permanent failed unit. Crash dumps aren't useful on ephemeral k8s
-# nodes (and kdump can't rebuild its initramfs on a read-only ostree root), so
-# mask it.
-RUN systemctl mask kdump.service
 
 # --- Permissions + services -------------------------------------------------
 RUN chmod 0644 /etc/modules-load.d/k8s.conf /etc/sysctl.d/k8s.conf /etc/containerd/config.toml \

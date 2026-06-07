@@ -40,6 +40,7 @@ RUN dnf -y install subscription-manager \
         btop \
         atop \
         nmon \
+        ocl-icd \
         duo_unix \
         katello-host-tools \
         katello-host-tools-tracer \
@@ -50,10 +51,19 @@ RUN dnf -y install subscription-manager \
 
 # katello-host-tools[-tracer] handle package-profile + enabled-repo upload to
 # Katello. firewalld is absent from the base — the bootc kickstart omits the
-# `firewall` directive rather than installing it.
+# `firewall` directive rather than installing it. ocl-icd provides
+# libOpenCL.so.1, which the EPEL htop build links against (htop fails to start
+# without it).
 
 # --- Services --------------------------------------------------------------
 RUN systemctl enable qemu-guest-agent sshd
+
+# kdump.service fails on these hosts ("No memory reserved for crash kernel":
+# crashkernel reservation yields kexec_crash_size=0 on the small-RAM EFI VMs),
+# leaving a permanent failed unit at login. Crash dumps aren't useful on the
+# fleet's ephemeral VMs and kdump can't rebuild its initramfs on a read-only
+# ostree root, so mask it.
+RUN systemctl mask kdump.service
 
 # --- Management SSH (root) keys: Foreman rex + Ascender/AWX -----------------
 # %post key injection lands under /var (/root -> var/roothome, /home -> var/home)
