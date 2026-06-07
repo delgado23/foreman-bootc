@@ -1,0 +1,24 @@
+[Unit]
+Description=Seed CNI plugin binaries into writable /var (ostree/bootc)
+Documentation=https://git.garaventaville.com/Garaventaville/foreman-bootc
+# On an ostree host the deployment root (incl. /opt) is read-only, so flannel's
+# install-cni-plugin initContainer cannot write its plugin into /opt/cni/bin and
+# the CNI never initializes (nodes stay NotReady). The image points /opt/cni/bin
+# at the writable /var/opt/cni/bin; this unit seeds it with the baked base
+# plugins (bridge/host-local/portmap/loopback...) stashed read-only in
+# /usr/lib/cni. cp -a preserves the bin_t SELinux label so the plugins execute
+# under enforcing SELinux. Runs once: skipped after the dir is seeded (the
+# plugins, incl. the one flannel adds, persist in /var).
+DefaultDependencies=no
+After=local-fs.target
+Before=containerd.service kubelet.service
+ConditionPathExists=!/var/opt/cni/bin/bridge
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/mkdir -p /var/opt/cni/bin
+ExecStart=/usr/bin/cp -a /usr/lib/cni/. /var/opt/cni/bin/
+
+[Install]
+WantedBy=multi-user.target

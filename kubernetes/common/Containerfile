@@ -1,0 +1,107 @@
+# kubernetes-common — shared Kubernetes node layer (image-mode / bootc).
+#
+# Builds FROM the Garaventaville AlmaLinux 10 base bootc image and bakes in the
+# container runtime + Kubernetes binaries and the node-level kernel/sysctl/
+# firewall configuration that EVERY Kubernetes node needs. The controlplane and
+# worker images build FROM this. See ../controlplane and ../worker.
+#
+# Package installs that used to run at runtime in the
+# kubernetes-cluster-provisioning Ansible roles (roles/common) now live here;
+# that playbook detects image-mode (/run/ostree-booted) and skips them.
+#
+# Build context is the repo root (so the COPY paths below resolve):
+#   podman build -t kubernetes-common:1.35.5 -f kubernetes/common/Containerfile .
+FROM foreman.garaventaville.com/garaventaville/bootc/almalinux10-bootc:10.0
+
+LABEL org.opencontainers.image.title="kubernetes-common" \
+      org.opencontainers.image.description="Shared Kubernetes node layer (containerd + kubelet/kubeadm/kubectl) for the Garaventaville fleet" \
+      org.opencontainers.image.vendor="garaventaville"
+
+# --- Packages from Katello (governed/synced repos, not public mirrors) ------
+# Register with the Kubernetes activation key (enables
+# Garaventaville_AlmaLinux_10_-_Kubernetes plus the base repo set), install with
+# public mirrors disabled, then unregister so the image carries no consumer
+# identity. Kubernetes binaries are PINNED to an exact NVR — image-mode is the
+# version pin (bump the tag + this NVR to upgrade), which closes the M3 audit
+# finding (kube* were installed with state=latest and unpinned).
+#
+# firewalld is absent from the base image but the node firewall rules
+# (roles/common, controlplane_infra, worker_storage) require it, so it is added
+# here. containerd + its CRI deps come from the Docker/AppStream repos.
+# The MySQL 8.4 repo is force-disabled: the activation key leaves it disabled,
+# but the broad --enablerepo glob would re-enable it, and dnf then satisfies the
+# mariadb-connector-c dependency (libmysqlclient) from mysql-community-libs,
+# which drags in mysql-community-server and conflicts with mariadb. Disabling it
+# keeps the client lib coming from BaseOS (mariadb-connector-c).
+ARG K8S_VERSION=1.35.5-150500.1.1
+RUN subscription-manager register --org Garaventaville --activationkey 'AlmaLinux 10 Kubernetes' \
+ && dnf -y --disablerepo='*' --enablerepo='Garaventaville_AlmaLinux_10_*' --disablerepo='*MySQL*' install \
+        containerd \
+        firewalld \
+        cri-tools \
+        kubelet-${K8S_VERSION} \
+        kubeadm-${K8S_VERSION} \
+        kubectl-${K8S_VERSION} \
+ && { subscription-manager unregister || true; } \
+ && { subscription-manager clean || true; } \
+ && dnf clean all \
+ && rm -rf /var/cache/dnf /var/lib/dnf/history.sqlite* /var/log/dnf* /var/log/hawkey.log
+
+# --- Node kernel modules + sysctl (loaded/applied at boot) ------------------
+COPY kubernetes/files/k8s-modules-load.conf /etc/modules-load.d/k8s.conf
+COPY kubernetes/files/k8s-sysctl.conf       /etc/sysctl.d/k8s.conf
+
+# --- containerd config ------------------------------------------------------
+COPY kubernetes/files/containerd-config.toml /etc/containerd/config.toml
+
+# --- firewalld: iptables backend --------------------------------------------
+# kube-proxy programs iptables (DNAT in PREROUTING). firewalld defaults to
+# nftables, which runs in parallel and can drop DNAT'd traffic before kube-proxy
+# rules fire. Force the iptables backend so both evaluate the same ruleset.
+# (Mirrors the lineinfile in roles/common/tasks/main.yml.)
+RUN sed -i 's/^FirewallBackend=.*/FirewallBackend=iptables/' /etc/firewalld/firewalld.conf \
+ && grep -q '^FirewallBackend=iptables' /etc/firewalld/firewalld.conf
+
+# --- /usr/local on writable /var --------------------------------------------
+# The base image ships /usr/local as a real directory on the read-only ostree
+# root, but the cluster tooling (Helm, and therefore the entire add-ons phase
+# which calls /usr/local/bin/helm) installs binaries into /usr/local/bin at
+# runtime. Replace it with the ostree-standard symlink to writable /var/usrlocal;
+# usrlocal.conf (tmpfiles) creates the bin skeleton at boot.
+RUN rm -rf /usr/local && ln -s ../var/usrlocal /usr/local
+COPY kubernetes/files/usrlocal.conf /usr/lib/tmpfiles.d/usrlocal.conf
+
+# --- CNI plugin bin dir on writable /var ------------------------------------
+# kubernetes-cni installs the base CNI plugins to /opt/cni/bin, but on an ostree
+# host the deployment root (incl. /opt) is read-only, so flannel's
+# install-cni-plugin initContainer can't add its plugin there and the CNI never
+# initializes (nodes NotReady, flannel pod Init:CrashLoopBackOff). Stash the base
+# plugins read-only in /usr/lib/cni and redirect /opt/cni/bin to the writable
+# /var/opt/cni/bin (seeded at boot by cni-bin-seed.service). containerd's CNI
+# bin_dir (/opt/cni/bin) and the upstream flannel manifest stay unchanged.
+COPY kubernetes/files/cni-bin-seed.service /usr/lib/systemd/system/cni-bin-seed.service
+RUN mv /opt/cni/bin /usr/lib/cni \
+ && ln -s /var/opt/cni/bin /opt/cni/bin \
+ && systemctl enable cni-bin-seed.service
+
+# --- flexvolume dir (kube-controller-manager hostPath) ----------------------
+# kubeadm's kube-controller-manager static pod mounts
+# /usr/libexec/kubernetes/kubelet-plugins/volume/exec as a hostPath with
+# type=DirectoryOrCreate. On an ostree host /usr is immutable, so the kubelet
+# cannot create it at runtime and the KCM pod never starts (kubeadm init then
+# fails: "kube-controller-manager is not healthy ... 10257: connection
+# refused"). Bake the directory so it already exists (read-only is fine —
+# flexvolume is deprecated/unused here, CSI handles storage).
+RUN mkdir -p /usr/libexec/kubernetes/kubelet-plugins/volume/exec
+
+# --- Permissions + services -------------------------------------------------
+RUN chmod 0644 /etc/modules-load.d/k8s.conf /etc/sysctl.d/k8s.conf /etc/containerd/config.toml \
+ && chmod 0600 /usr/lib/systemd/system/kubelet.service \
+ && systemctl enable containerd kubelet firewalld
+
+# Clean build leftovers from /tmp and /var/tmp. (See base Containerfile for why
+# /run is left alone.) Then validate the bootc layout at build time.
+RUN rm -rf /tmp/* /var/tmp/*
+RUN bootc container lint
+
+# Note: do NOT add a CMD/ENTRYPOINT — bootc boots the OS, it doesn't run a process.
