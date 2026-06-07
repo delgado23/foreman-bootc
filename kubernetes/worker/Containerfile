@@ -16,8 +16,10 @@ LABEL org.opencontainers.image.title="kubernetes-worker" \
       org.opencontainers.image.description="Kubernetes worker node image (lvm2 + iscsi for Longhorn) for the Garaventaville fleet" \
       org.opencontainers.image.vendor="garaventaville"
 
+# --disablerepo='*MySQL*': avoid the MySQL 8.4 repo being force-enabled by the
+# broad glob (it conflicts with mariadb via the connector lib; see common image).
 RUN subscription-manager register --org Garaventaville --activationkey 'AlmaLinux 10 Kubernetes' \
- && dnf -y --disablerepo='*' --enablerepo='Garaventaville_AlmaLinux_10_*' install \
+ && dnf -y --disablerepo='*' --enablerepo='Garaventaville_AlmaLinux_10_*' --disablerepo='*MySQL*' install \
         lvm2 \
         gdisk \
         iscsi-initiator-utils \

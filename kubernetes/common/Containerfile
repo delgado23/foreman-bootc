@@ -28,9 +28,14 @@ LABEL org.opencontainers.image.title="kubernetes-common" \
 # firewalld is absent from the base image but the node firewall rules
 # (roles/common, controlplane_infra, worker_storage) require it, so it is added
 # here. containerd + its CRI deps come from the Docker/AppStream repos.
+# The MySQL 8.4 repo is force-disabled: the activation key leaves it disabled,
+# but the broad --enablerepo glob would re-enable it, and dnf then satisfies the
+# mariadb-connector-c dependency (libmysqlclient) from mysql-community-libs,
+# which drags in mysql-community-server and conflicts with mariadb. Disabling it
+# keeps the client lib coming from BaseOS (mariadb-connector-c).
 ARG K8S_VERSION=1.35.5-150500.1.1
 RUN subscription-manager register --org Garaventaville --activationkey 'AlmaLinux 10 Kubernetes' \
- && dnf -y --disablerepo='*' --enablerepo='Garaventaville_AlmaLinux_10_*' install \
+ && dnf -y --disablerepo='*' --enablerepo='Garaventaville_AlmaLinux_10_*' --disablerepo='*MySQL*' install \
         containerd \
         firewalld \
         cri-tools \

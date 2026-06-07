@@ -17,8 +17,11 @@ LABEL org.opencontainers.image.title="kubernetes-controlplane" \
       org.opencontainers.image.description="Kubernetes control plane node image (keepalived + haproxy) for the Garaventaville fleet" \
       org.opencontainers.image.vendor="garaventaville"
 
+# --disablerepo='*MySQL*': keepalived pulls mariadb-connector-c; with the MySQL
+# 8.4 repo enabled dnf would instead pull mysql-community-* and conflict with
+# mariadb. Disabling it keeps the client lib coming from BaseOS.
 RUN subscription-manager register --org Garaventaville --activationkey 'AlmaLinux 10 Kubernetes' \
- && dnf -y --disablerepo='*' --enablerepo='Garaventaville_AlmaLinux_10_*' install \
+ && dnf -y --disablerepo='*' --enablerepo='Garaventaville_AlmaLinux_10_*' --disablerepo='*MySQL*' install \
         keepalived \
         haproxy \
  && { subscription-manager unregister || true; } \
