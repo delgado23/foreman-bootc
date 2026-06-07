@@ -28,6 +28,10 @@ foreman/
   create_product.rb      create the Katello "bootc" product (correct, via dynflow)
   load_templates.rb      load both templates into Foreman + set as OS defaults
   ops/                   one-off recovery/inspection scripts (incident reference)
+main.yml                 Ansible playbook: weekly build/test/push of all images
+vars/vault.yml           registry creds for the weekly build (Ansible Vault, encrypted)
+ascender/
+  setup_weekly_builds.py idempotent Ascender API setup (project + JT + schedule)
 ```
 
 ## Build host
@@ -87,6 +91,48 @@ The Kubernetes host groups (`AlmaLinux 10/Kubernetes Controlplane Node` id 29,
 toggle as the `Image Mode` group below, but bound to the existing k8s groups so
 the Ansible inventory group names are unchanged. They keep the
 `AlmaLinux 10 Kubernetes` activation key.
+
+## Weekly automated builds (Ascender)
+
+All four images are rebuilt, smoke-tested, and pushed once a week by Ascender
+(`https://ascender.garaventaville.com`) so they pick up upstream security/package
+updates under their pinned tags. The job runs `main.yml` against
+`nexus.garaventaville.com`, becoming the rootless `bootcbuild` user and reusing the
+same `build-push.sh` / `build-push-k8s.sh` scripts (which build → smoke-test → push).
+
+Each run publishes **two tags per image**: the pinned tag (`10.0`, `1.35.5` —
+overwritten weekly so hosts tracking the pin get the refresh) and a dated tag
+(`10.0-20260607`, `1.35.5-20260607` — an immutable weekly snapshot for rollback).
+The scripts honor `EXTRA_TAGS="<tag> [tag...]"` for the extra tags.
+
+```
+main.yml                target nexus, sudo -> bootcbuild, git pull, login,
+                        ./build-push.sh 10.0  +  ./build-push-k8s.sh 1.35.5
+vars/vault.yml          registry_username / registry_password (ansible-vault)
+ascender/setup_weekly_builds.py   creates the Ascender objects via the API
+```
+
+**One-time setup**
+
+1. **Registry creds** — `cp vars/vault.yml.example vars/vault.yml`, fill in the
+   Katello registry user/password, then `ansible-vault encrypt vars/vault.yml`
+   using the password of the Vault credential the job will attach (`linux
+   provisiong` by default). Commit the encrypted file.
+2. **Build host** — ensure the Ascender machine credential (`Ansible User`) can
+   `sudo` to `bootcbuild` on nexus, and lingering is on so rootless podman has a
+   runtime dir: `loginctl enable-linger bootcbuild`.
+3. **Create the Ascender objects** — project (`foreman-bootc`), job template
+   (`Build bootc Images Weekly`), and a weekly schedule (Sundays 03:00 ET):
+
+   ```bash
+   export ASCENDER_TOKEN=...                 # a token, never committed
+   ./ascender/setup_weekly_builds.py --dry-run   # resolve deps, print the plan
+   ./ascender/setup_weekly_builds.py             # create/update (idempotent)
+   ```
+
+   Re-running is safe (find-or-create + PATCH). Override cadence with
+   `--weekday/--hour/--minute/--timezone`, or the Vault credential with
+   `--vault-credential`.
 
 ## Switching between image-mode (bootc) and RPM hosts
 

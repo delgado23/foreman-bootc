@@ -12,6 +12,8 @@
 #   ./build-push-k8s.sh [TAG]
 #   TAG defaults to "1.35.5" (matches the pinned K8S_VERSION in the common
 #   Containerfile). Override REGISTRY/ORG/PRODUCT via env vars.
+#   EXTRA_TAGS (space-separated) publishes each image under additional tags too
+#   (e.g. a dated tag for the weekly Ascender build: EXTRA_TAGS="1.35.5-20260607").
 #
 # Login first (interactive, once per session / until token expires):
 #   podman login "$REGISTRY"
@@ -63,17 +65,25 @@ if ! podman login --get-login "${REGISTRY}" >/dev/null 2>&1; then
   exit 1
 fi
 
+# Publish under the pinned TAG plus any EXTRA_TAGS (e.g. a weekly dated tag).
+# shellcheck disable=SC2206
+EXTRA=(${EXTRA_TAGS:-})
+ALL_TAGS=("${TAG}" "${EXTRA[@]}")
 for img in "${COMMON}" "${CP}" "${WORKER}"; do
-  remote="${REGISTRY}/${ORG}/${PRODUCT}/${img}:${TAG}"
-  echo ">> Tagging  ${img}:${TAG} -> ${remote}"
-  podman tag "${img}:${TAG}" "${remote}"
-  echo ">> Pushing  ${remote}"
-  podman push "${remote}"
+  for t in "${ALL_TAGS[@]}"; do
+    remote="${REGISTRY}/${ORG}/${PRODUCT}/${img}:${t}"
+    echo ">> Tagging  ${img}:${TAG} -> ${remote}"
+    podman tag "${img}:${TAG}" "${remote}"
+    echo ">> Pushing  ${remote}"
+    podman push "${remote}"
+  done
 done
 
 echo ">> Done. Images available at:"
 for img in "${COMMON}" "${CP}" "${WORKER}"; do
-  echo "     ${REGISTRY}/${ORG}/${PRODUCT}/${img}:${TAG}"
+  for t in "${ALL_TAGS[@]}"; do
+    echo "     ${REGISTRY}/${ORG}/${PRODUCT}/${img}:${t}"
+  done
 done
 echo "   Set the controlplane/worker refs as the 'ostreecontainer' host-group param."
 

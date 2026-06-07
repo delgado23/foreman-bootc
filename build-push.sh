@@ -6,6 +6,8 @@
 # Usage:
 #   ./build-push.sh [TAG]
 #   TAG defaults to "10.0". Override REGISTRY/ORG/ENV/IMAGE via env vars.
+#   EXTRA_TAGS (space-separated) publishes the same image under additional tags
+#   (e.g. a dated tag for the weekly Ascender build: EXTRA_TAGS="10.0-20260607").
 #
 # Login first (interactive, once per session / until token expires):
 #   podman login "$REGISTRY"
@@ -40,12 +42,20 @@ if ! podman login --get-login "${REGISTRY}" >/dev/null 2>&1; then
   exit 1
 fi
 
-echo ">> Tagging  ${LOCAL_REF} -> ${REMOTE_REF}"
-podman tag "${LOCAL_REF}" "${REMOTE_REF}"
-
-echo ">> Pushing  ${REMOTE_REF}"
-podman push "${REMOTE_REF}"
+# Publish under the pinned TAG plus any EXTRA_TAGS (e.g. a weekly dated tag).
+# shellcheck disable=SC2206
+EXTRA=(${EXTRA_TAGS:-})
+ALL_TAGS=("${TAG}" "${EXTRA[@]}")
+for t in "${ALL_TAGS[@]}"; do
+  remote="${REGISTRY}/${ORG}/${PRODUCT}/${IMAGE}:${t}"
+  echo ">> Tagging  ${LOCAL_REF} -> ${remote}"
+  podman tag "${LOCAL_REF}" "${remote}"
+  echo ">> Pushing  ${remote}"
+  podman push "${remote}"
+done
 
 echo ">> Done. Image available at:"
-echo "     ${REMOTE_REF}"
-echo "   Set this as the host parameter 'ostreecontainer'."
+for t in "${ALL_TAGS[@]}"; do
+  echo "     ${REGISTRY}/${ORG}/${PRODUCT}/${IMAGE}:${t}"
+done
+echo "   Set the pinned ref as the host parameter 'ostreecontainer'."
