@@ -62,3 +62,9 @@ ostreecontainer = foreman.garaventaville.com/garaventaville/bootc/almalinux10-bo
 - bootc image hygiene: don't `rm -rf /run/*` in the Containerfile — buildah
   keeps live mounts there (`/run/secrets`, `/run/.containerenv`). `/run` is
   tmpfs at boot anyway, so the `nonempty-run-tmp` lint warning is harmless.
+- **Install-time pull auth**: Katello's registry refuses anonymous pulls even
+  when the repo's `unprotected=true`. Pull authorization is per *lifecycle
+  environment* (`KTEnvironment#registry_unauthenticated_pull`, checked live in
+  `registry_proxies_controller.rb`). Anaconda pulls in `%pre` *before* the host
+  registers, so we enabled unauthenticated pull on **Library** (see
+  `foreman/enable_unauth_pull.rb`) — no creds needed in the kickstart.
