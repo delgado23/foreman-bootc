@@ -84,6 +84,22 @@ in the image:
   `bootc.booted.image` etc. to `/etc/rhsm/facts/bootc.facts` on boot + every
   30 min. That's what lights up the booted/staged/rollback cards.
 
+## Building from Katello content (not public mirrors)
+
+The Containerfile registers to Katello with the **`AlmaLinux 10` activation key**
+(`subscription-manager register --org Garaventaville --activationkey 'AlmaLinux 10'`)
+and installs with `--disablerepo='*' --enablerepo='Garaventaville_AlmaLinux_10_*'`,
+then unregisters — so the image is built from your synced/governed repos
+(BaseOS/AppStream/CRB/EPEL/Duo/Foreman client), not public mirrors. The only
+public fetch is `subscription-manager` itself (needed before Katello is
+reachable). A failed build can leave an orphaned Katello consumer to clean up.
+
+**Caveat — certbot:** `certbot`/`python3-certbot-dns-cloudflare` are temporarily
+dropped. EPEL upstream currently ships a broken `python3-pyOpenSSL 26.2.0` that
+requires `python3-cryptography >= 46`, which AlmaLinux 10 doesn't provide (it has
+43). This is an upstream EPEL bug, not stale content — re-add certbot once EPEL
+reverts pyOpenSSL and you re-sync the EPEL repo.
+
 ## Gotchas learned the hard way
 
 - **Push path is 3-part**: `<org_label>/<product_label>/<name>`, lowercased.
