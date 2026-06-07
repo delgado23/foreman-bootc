@@ -15,6 +15,12 @@ upgrade`/`switch`/`rollback` via remote execution).
 Containerfile            AlmaLinux 10 bootc image (FROM quay.io/almalinuxorg/almalinux-bootc:10)
 build-push.sh            build -> smoke-test -> push to the Katello registry
 prune.sh                 reclaim disk on the build host after a build
+build-push-k8s.sh        build+push the 3 Kubernetes images (common/controlplane/worker)
+kubernetes/
+  common/Containerfile        FROM almalinux10-bootc: containerd + kubelet/kubeadm/kubectl (pinned)
+  controlplane/Containerfile  FROM kubernetes-common: + keepalived, haproxy
+  worker/Containerfile        FROM kubernetes-common: + lvm2, gdisk, iscsi
+  files/                      baked node config (containerd cfg, k8s modules/sysctl)
 templates/
   kickstart_almalinux10_bootc.erb   provision template: ostreecontainer install
   pxegrub2_almalinux10_bootc.erb    UEFI boot entry: supplies inst.stage2
@@ -44,6 +50,43 @@ Then create a host on AlmaLinux 10 with host parameter:
 ```
 ostreecontainer = foreman.garaventaville.com/garaventaville/bootc/almalinux10-bootc:10.0
 ```
+
+## Kubernetes node images
+
+Three images layer the Kubernetes node software on top of the base, so CP/worker
+nodes boot pre-built instead of being assembled at runtime by the
+`kubernetes-cluster-provisioning` Ansible playbook (that playbook detects
+image-mode via `/run/ostree-booted` and skips the now-baked package installs).
+
+```
+almalinux10-bootc:10.0
+  └── kubernetes-common:1.35.5        containerd + config, kubelet/kubeadm/kubectl
+                                       (PINNED NVR), cri-tools, firewalld, k8s
+                                       modules/sysctl, iptables firewall backend
+        ├── kubernetes-controlplane:1.35.5   + keepalived, haproxy
+        └── kubernetes-worker:1.35.5         + lvm2, gdisk, iscsi (iscsid enabled)
+```
+
+The **tag is the Kubernetes version** — image-mode is the version pin. To upgrade
+k8s, bump `K8S_VERSION` in `kubernetes/common/Containerfile`, rebuild with the
+new tag, and point the host-group `ostreecontainer` params at it.
+
+```bash
+# on nexus, as bootcbuild, in the repo checkout
+podman login foreman.garaventaville.com
+./build-push-k8s.sh 1.35.5
+# -> foreman.garaventaville.com/garaventaville/bootc/kubernetes-common:1.35.5
+#    foreman.garaventaville.com/garaventaville/bootc/kubernetes-controlplane:1.35.5
+#    foreman.garaventaville.com/garaventaville/bootc/kubernetes-worker:1.35.5
+```
+
+The Kubernetes host groups (`AlmaLinux 10/Kubernetes Controlplane Node` id 29,
+`… Worker Node` id 30) are converted to image-mode in place: each gets
+`ostreecontainer` (the controlplane/worker image), `ansible_pkg_mgr=dnf`,
+`remote_execution_ssh_user=root`, and the bootc template combinations — same
+toggle as the `Image Mode` group below, but bound to the existing k8s groups so
+the Ansible inventory group names are unchanged. They keep the
+`AlmaLinux 10 Kubernetes` activation key.
 
 ## Switching between image-mode (bootc) and RPM hosts
 

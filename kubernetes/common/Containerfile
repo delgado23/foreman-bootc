@@ -1,0 +1,70 @@
+# kubernetes-common — shared Kubernetes node layer (image-mode / bootc).
+#
+# Builds FROM the Garaventaville AlmaLinux 10 base bootc image and bakes in the
+# container runtime + Kubernetes binaries and the node-level kernel/sysctl/
+# firewall configuration that EVERY Kubernetes node needs. The controlplane and
+# worker images build FROM this. See ../controlplane and ../worker.
+#
+# Package installs that used to run at runtime in the
+# kubernetes-cluster-provisioning Ansible roles (roles/common) now live here;
+# that playbook detects image-mode (/run/ostree-booted) and skips them.
+#
+# Build context is the repo root (so the COPY paths below resolve):
+#   podman build -t kubernetes-common:1.35.5 -f kubernetes/common/Containerfile .
+FROM foreman.garaventaville.com/garaventaville/bootc/almalinux10-bootc:10.0
+
+LABEL org.opencontainers.image.title="kubernetes-common" \
+      org.opencontainers.image.description="Shared Kubernetes node layer (containerd + kubelet/kubeadm/kubectl) for the Garaventaville fleet" \
+      org.opencontainers.image.vendor="garaventaville"
+
+# --- Packages from Katello (governed/synced repos, not public mirrors) ------
+# Register with the Kubernetes activation key (enables
+# Garaventaville_AlmaLinux_10_-_Kubernetes plus the base repo set), install with
+# public mirrors disabled, then unregister so the image carries no consumer
+# identity. Kubernetes binaries are PINNED to an exact NVR — image-mode is the
+# version pin (bump the tag + this NVR to upgrade), which closes the M3 audit
+# finding (kube* were installed with state=latest and unpinned).
+#
+# firewalld is absent from the base image but the node firewall rules
+# (roles/common, controlplane_infra, worker_storage) require it, so it is added
+# here. containerd + its CRI deps come from the Docker/AppStream repos.
+ARG K8S_VERSION=1.35.5-150500.1.1
+RUN subscription-manager register --org Garaventaville --activationkey 'AlmaLinux 10 Kubernetes' \
+ && dnf -y --disablerepo='*' --enablerepo='Garaventaville_AlmaLinux_10_*' install \
+        containerd \
+        firewalld \
+        cri-tools \
+        kubelet-${K8S_VERSION} \
+        kubeadm-${K8S_VERSION} \
+        kubectl-${K8S_VERSION} \
+ && { subscription-manager unregister || true; } \
+ && { subscription-manager clean || true; } \
+ && dnf clean all \
+ && rm -rf /var/cache/dnf /var/lib/dnf/history.sqlite* /var/log/dnf* /var/log/hawkey.log
+
+# --- Node kernel modules + sysctl (loaded/applied at boot) ------------------
+COPY kubernetes/files/k8s-modules-load.conf /etc/modules-load.d/k8s.conf
+COPY kubernetes/files/k8s-sysctl.conf       /etc/sysctl.d/k8s.conf
+
+# --- containerd config ------------------------------------------------------
+COPY kubernetes/files/containerd-config.toml /etc/containerd/config.toml
+
+# --- firewalld: iptables backend --------------------------------------------
+# kube-proxy programs iptables (DNAT in PREROUTING). firewalld defaults to
+# nftables, which runs in parallel and can drop DNAT'd traffic before kube-proxy
+# rules fire. Force the iptables backend so both evaluate the same ruleset.
+# (Mirrors the lineinfile in roles/common/tasks/main.yml.)
+RUN sed -i 's/^FirewallBackend=.*/FirewallBackend=iptables/' /etc/firewalld/firewalld.conf \
+ && grep -q '^FirewallBackend=iptables' /etc/firewalld/firewalld.conf
+
+# --- Permissions + services -------------------------------------------------
+RUN chmod 0644 /etc/modules-load.d/k8s.conf /etc/sysctl.d/k8s.conf /etc/containerd/config.toml \
+ && chmod 0600 /usr/lib/systemd/system/kubelet.service \
+ && systemctl enable containerd kubelet firewalld
+
+# Clean build leftovers from /tmp and /var/tmp. (See base Containerfile for why
+# /run is left alone.) Then validate the bootc layout at build time.
+RUN rm -rf /tmp/* /var/tmp/*
+RUN bootc container lint
+
+# Note: do NOT add a CMD/ENTRYPOINT — bootc boots the OS, it doesn't run a process.

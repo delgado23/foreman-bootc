@@ -1,0 +1,32 @@
+# kubernetes-worker — worker node image (image-mode / bootc).
+#
+# Builds FROM the locally-built kubernetes-common image and adds the storage
+# packages Longhorn needs (lvm2, gdisk, iscsi-initiator-utils) and enables
+# iscsid. The data-disk LVM/XFS/mount flow is NOT baked: it is done at runtime by
+# roles/worker_storage (disk-specific), so only the packages + iscsid live here.
+#
+# Build context is the repo root:
+#   podman build -t kubernetes-worker:1.35.5 \
+#     --build-arg K8S_IMAGE_TAG=1.35.5 --pull=false \
+#     -f kubernetes/worker/Containerfile .
+ARG K8S_IMAGE_TAG=1.35.5
+FROM kubernetes-common:${K8S_IMAGE_TAG}
+
+LABEL org.opencontainers.image.title="kubernetes-worker" \
+      org.opencontainers.image.description="Kubernetes worker node image (lvm2 + iscsi for Longhorn) for the Garaventaville fleet" \
+      org.opencontainers.image.vendor="garaventaville"
+
+RUN subscription-manager register --org Garaventaville --activationkey 'AlmaLinux 10 Kubernetes' \
+ && dnf -y --disablerepo='*' --enablerepo='Garaventaville_AlmaLinux_10_*' install \
+        lvm2 \
+        gdisk \
+        iscsi-initiator-utils \
+ && { subscription-manager unregister || true; } \
+ && { subscription-manager clean || true; } \
+ && dnf clean all \
+ && rm -rf /var/cache/dnf /var/lib/dnf/history.sqlite* /var/log/dnf* /var/log/hawkey.log
+
+RUN systemctl enable iscsid
+
+RUN rm -rf /tmp/* /var/tmp/*
+RUN bootc container lint

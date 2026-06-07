@@ -1,0 +1,30 @@
+# kubernetes-controlplane — control plane node image (image-mode / bootc).
+#
+# Builds FROM the locally-built kubernetes-common image and adds the control
+# plane HA packages (keepalived + haproxy). Their configuration is NOT baked: it
+# is rendered at runtime by roles/controlplane_infra from per-host Foreman
+# parameters (keepalived state/priority, HAProxy backends), so only the packages
+# live here.
+#
+# Build context is the repo root:
+#   podman build -t kubernetes-controlplane:1.35.5 \
+#     --build-arg K8S_IMAGE_TAG=1.35.5 --pull=false \
+#     -f kubernetes/controlplane/Containerfile .
+ARG K8S_IMAGE_TAG=1.35.5
+FROM kubernetes-common:${K8S_IMAGE_TAG}
+
+LABEL org.opencontainers.image.title="kubernetes-controlplane" \
+      org.opencontainers.image.description="Kubernetes control plane node image (keepalived + haproxy) for the Garaventaville fleet" \
+      org.opencontainers.image.vendor="garaventaville"
+
+RUN subscription-manager register --org Garaventaville --activationkey 'AlmaLinux 10 Kubernetes' \
+ && dnf -y --disablerepo='*' --enablerepo='Garaventaville_AlmaLinux_10_*' install \
+        keepalived \
+        haproxy \
+ && { subscription-manager unregister || true; } \
+ && { subscription-manager clean || true; } \
+ && dnf clean all \
+ && rm -rf /var/cache/dnf /var/lib/dnf/history.sqlite* /var/log/dnf* /var/log/hawkey.log
+
+RUN rm -rf /tmp/* /var/tmp/*
+RUN bootc container lint
