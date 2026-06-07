@@ -5,96 +5,193 @@ model: ProvisioningTemplate
 oses:
 - AlmaLinux 10
 description: |
-  Image-mode (bootc) provisioning template for AlmaLinux 10.
+  Image-mode (bootc) provisioning for AlmaLinux 10. Based on the stock
+  "Kickstart default" template, changed in exactly three places:
+    1. install source: url/repo + liveimg replaced by `ostreecontainer`
+    2. the %packages section is removed (ostreecontainer installs reject it)
+    3. the post-install `dnf -y update` is removed (image is immutable)
+  Everything else (networking, partitioning, %pre, registration, rex keys,
+  build callback) is the stock logic, so it uses snippets that exist here.
 
-  Replaces the standard package install (url / repo / %packages) with the
-  Anaconda `ostreecontainer` command, which pulls a bootc OCI image from the
-  Katello internal registry and deploys it as an ostree-based, immutable OS.
-
-  REQUIRED host parameter:
-    ostreecontainer        full image ref, e.g.
-                           foreman.garaventaville.com/MYORG/Library/almalinux10-bootc:10.0
-
-  OPTIONAL host parameters:
-    bootc_registry_auth    base64 "user:pass" for a private registry (mark "Hidden/encrypted")
-    bootc_skip_sig_check   boolean; default true (internal Katello registry has no sigstore)
-    kt_activation_keys     activation key(s) for subscription-manager registration
-    lang / keyboard / time-zone / bootloader-append   optional overrides
-
-  COMPANION PXE template:
-    The PXELinux/PXEGrub2 template must add the install tree via the kernel arg
-      inst.stage2=<EL10 BaseOS install tree URL>
-    Set host parameter `kickstart_kernel_custom_options` to inject it, e.g.
-      ["inst.stage2=http://foreman.garaventaville.com/pulp/content/MYORG/Library/.../BaseOS/"]
-
-  NOTE: there is intentionally NO %packages section — `ostreecontainer` installs
-  the entire OS from the container image, and Anaconda rejects %packages with it.
-%>
+  The bootc image ref comes from the `ostreecontainer` host parameter, set by
+  the "AlmaLinux 10/Image Mode" host group. Anonymous pull is enabled on the
+  Library lifecycle environment, so no registry credentials are needed.
+  Set `bootc_skip_sig_check=false` only if you configure a sigstore policy.
+-%>
 <%
-  # ----- derived values -----------------------------------------------------
-  ostree_img    = @host.params['ostreecontainer']
-  skip_sig      = @host.params['bootc_skip_sig_check']
-  skip_sig      = true if skip_sig.nil?                 # default: skip for internal registry
-  reg_auth      = @host.params['bootc_registry_auth']
-  registry_host = ostree_img.to_s.split('/').first      # = your Foreman/Katello host
-  ca_url        = "http://#{registry_host}/pub/katello-server-ca.crt"
-%>
-# === AlmaLinux 10 image-mode (bootc) install ================================
-text
-reboot
-# eula --agreed
+  rhel_compatible = @host.operatingsystem.family == 'Redhat' && @host.operatingsystem.name != 'Fedora'
+  is_fedora = @host.operatingsystem.name == 'Fedora'
+  os_major = @host.operatingsystem.major.to_i
+  os_minor = @host.operatingsystem.minor.to_i
+  # safemode renderer does not support unary negation
+  proxy_uri = host_param('http-proxy') ? "http://#{host_param('http-proxy')}:#{host_param('http-proxy-port')}" : nil
+  proxy_string = proxy_uri ? " --proxy=#{proxy_uri}" : ''
+  puppet_enabled = !host_param_true?('skip-puppet-setup') && (host_puppet_server.present? || host_param_true?('force-puppet'))
+  salt_enabled = host_param('salt_master') ? true : false
+  chef_enabled = @host.respond_to?(:chef_proxy) && @host.chef_proxy
+  use_ntp = host_param_true?('use-ntp')
+  iface = @host.provision_interface
+  use_rhsm = (@host.operatingsystem.name == 'RedHat' || @host.operatingsystem.name == 'RHEL') && os_major >= 9
+-%>
+# This kickstart file was rendered from the Foreman provisioning template "<%= @template_name %>".
+# for <%= @host %> running <%= @host.operatingsystem.name %> <%= os_major %> <%= @arch %> (image mode / bootc)
+# Organization: <%= @host.organization %>
+# Location: <%= @host.location %>
+<%
+if plugin_present?('katello')
+-%>
+# Lifecycle environment: <%= @host.single_lifecycle_environment %>
+# Content View: <%= @host.single_content_view %>
+# Content Source: <%= @host.content_source %>
+<% end -%>
 
-lang <%= @host.params['lang'] || 'en_US.UTF-8' %>
-keyboard <%= @host.params['keyboard'] || 'us' %>
-timezone <%= @host.params['time-zone'] || 'UTC' %> --utc
+<%# --- Image-mode install source: ostreecontainer replaces url/repo/%packages --- -%>
+ostreecontainer --url=<%= host_param('ostreecontainer') %><%= host_param_false?('bootc_skip_sig_check') ? '' : ' --no-signature-verification' %>
 
-# Networking (renders static/DHCP per NIC from Foreman host config)
-<%= snippet 'kickstart_networking_setup' %>
+lang <%= host_param('lang') || 'en_US.UTF-8' %>
+selinux --<%= host_param('selinux-mode') || host_param('selinux') || 'enforcing' %>
+keyboard <%= host_param('keyboard') || 'us' %>
+
+<%
+# start with provisioning interface, then other non-bond non-bridge interfaces and the bonds + bridges at the end
+@host.interfaces.reject{ |iface| iface.bmc? }.sort_by { |iface| (iface.bond? || iface.bridge?) ? 0 : iface.provision? ? 20 : 10 }.each do |iface|
+-%>
+<%= snippet(
+      'kickstart_network_interface',
+      variables: {
+        iface: iface,
+        host: @host,
+        static: @static,
+        static6: @static6
+      }
+    ) -%>
+<%
+end
+-%>
 
 rootpw --iscrypted <%= root_pass %>
-selinux --enforcing
-services --enabled=sshd
-# If `firewall --service=ssh` errors during install, drop the --service flag.
-firewall --enabled --service=ssh
-
-# Disk layout comes from the host's assigned partition table (the stock
-# "Kickstart default" ptable works: zerombr / clearpart --all / autopart).
-<%= @host.diskLayout %>
-bootloader --location=mbr --append="<%= @host.params['bootloader-append'] || 'rhgb quiet' %>"
-
-# ----- bootc image source (this is the key line) ---------------------------
-ostreecontainer --url=<%= ostree_img %><%= ' --no-signature-verification' if skip_sig %>
-
-# === Pre-install: trust the internal registry / write pull secret ==========
-%pre --log=/tmp/ks-pre.log
-# Trust the Katello server CA inside the Anaconda installer environment so the
-# ostreecontainer pull over TLS succeeds.
-curl -sk -o /etc/pki/ca-trust/source/anchors/katello-server-ca.crt <%= ca_url %> \
-  && update-ca-trust extract
-<% if reg_auth -%>
-# Pull secret for a private registry (consumed by ostreecontainer).
-mkdir -p /etc/ostree
-cat > /etc/ostree/auth.json <<'AUTH_EOF'
-{"auths":{"<%= registry_host %>":{"auth":"<%= reg_auth %>"}}}
-AUTH_EOF
-chmod 600 /etc/ostree/auth.json
+<%# Firewall -%>
+<% if host_param_true?('disable-firewall') -%>
+firewall --disable
+<% else -%>
+firewall --service=ssh
 <% end -%>
+<%# Authentication options -%>
+<% if (is_fedora && os_major >= 28) || (rhel_compatible && os_major > 7) -%>
+authselect --useshadow --passalgo=<%= @host.operatingsystem.password_hash.downcase || 'sha256' %> --kickstart
+<% else -%>
+authconfig --useshadow --passalgo=<%= @host.operatingsystem.password_hash.downcase || 'sha256' %> --kickstart
+<% end -%>
+<%# Timezone + NTP (RHEL >= 9 style) -%>
+timezone --utc <%= host_param('time-zone') || 'UTC' %>
+<% if host_param('ntp-pools') -%>
+<% host_param('ntp-pools').each do |ntppool| -%>
+timesource --ntp-pool <%= ntppool %>
+<% end -%>
+<% elsif host_param('ntp-server').respond_to?(:join) -%>
+<% host_param('ntp-server').each do |ntpserver| -%>
+timesource --ntp-server <%= ntpserver %>
+<% end -%>
+<% else -%>
+timesource --ntp-server <%= host_param('ntp-server') || '2.pool.ntp.org' %>
+<% end -%>
+
+<% if host_enc['parameters']['realm'] && @host.realm && @host.realm.realm_type == 'Active Directory' -%>
+# One-time password will be requested at install time. Otherwise, $HOST[OTP] is used as a placeholder value.
+realm join --one-time-password='<%= @host.otp || "$HOST[OTP]" %>' <%= @host.realm %>
+<% end -%>
+
+bootloader --location=mbr --append="<%= host_param('bootloader-append') || 'nofb quiet splash=quiet' %>" <%= grub_pass %>
+
+<% if @dynamic -%>
+%include /tmp/diskpart.cfg
+<% else -%>
+<%= @host.diskLayout %>
+<% end -%>
+
+skipx
+text
+reboot
+
+<%# NOTE: no %packages section — ostreecontainer installs the whole OS from the
+    container image and Anaconda rejects %packages alongside it. -%>
+
+<% if @dynamic -%>
+%pre --log=/tmp/install.pre.dynamic.log
+<%= snippet_if_exists(template_name + " custom pre") %>
+<%= @host.diskLayout %>
+%end
+<% end -%>
+
+%post --nochroot
+exec < /dev/tty3 > /dev/tty3
+chvt 3
+(
+
+<% if host_param_false?('no-resolv-override') -%>
+cp -va /etc/resolv.conf /mnt/sysimage/etc/resolv.conf
+<% end -%>
+
+<%= snippet_if_exists(template_name + " custom postnochroot") -%>
+
+chvt 1
+) 2>&1 | tee /mnt/sysimage/root/install.postnochroot.log
 %end
 
-# === Post-install: register, push rex keys, signal Foreman =================
-%post --log=/root/ks-post.log
-# Register to Katello via subscription-manager. This is what makes the host
-# show up as an image-mode host (Katello reads bootc facts after registration).
-<%= snippet 'redhat_register' %>
+<%#
+Main post script. Registration + remote-execution keys + EFI boot order.
+No `dnf update` — the OS is immutable; ship changes by rebuilding the image.
+%>
+%post
+exec < /dev/tty3 > /dev/tty3
+chvt 3
+(
+logger "Starting anaconda <%= @host %> postinstall (image mode)"
 
-# Enable repos so subscription/errata data uploads (image-mode hosts still
-# report facts even though package actions are disabled on them).
-subscription-manager repos --enable '*' 2>/dev/null || true
+<%= snippet 'redhat_register' if rhel_compatible && !use_rhsm -%>
 
-# Inject Foreman remote-execution SSH key(s) so bootc upgrade/switch/rollback
-# jobs can run later.
-<%= snippet 'remote_execution_ssh_keys' %>
+<% if @host.realm && (@host.realm.realm_type == 'FreeIPA' || @host.realm.realm_type == 'Red Hat Identity Management') -%>
+<%= snippet 'freeipa_register' %>
+<% end -%>
 
-# Tell Foreman the build is done (renders the call to the 'built' URL).
-<%= snippet 'built' %>
+<%= snippet('remote_execution_ssh_keys') %>
+
+<% if plugin_present?('katello') && host_param_true?('enable-remote-execution-pull') -%>
+<%= save_to_file('/root/remote_execution_pull_setup.sh', snippet('remote_execution_pull_setup'), verbatim: true) %>
+chmod +x /root/remote_execution_pull_setup.sh
+/root/remote_execution_pull_setup.sh
+<% end -%>
+
+<%= snippet('ansible_provisioning_callback') %>
+
+<%= snippet 'efibootmgr_netboot' %>
+
+<%= snippet_if_exists(template_name + " custom post") %>
+
+touch /tmp/foreman_built
+chvt 1
+) 2>&1 | tee /root/install.post.log
+%end
+
+# copy %pre log files into chroot
+%post --nochroot
+cp -vf /tmp/*.pre.*.log /mnt/sysimage/root/ 2>/dev/null || true
+%end
+
+<%#
+The last post section halts Anaconda to prevent endless loop in case HTTP request fails
+%>
+%post --erroronfail --log=/root/install-callhome.post.log
+
+<%= snippet 'eject_cdrom' -%>
+
+if test -f /tmp/foreman_built; then
+  echo "calling home: build is done!"
+  <%= indent(2, skip1: true, skip_content: 'EOF') { snippet('built', :variables => { :endpoint => 'built', :method => 'POST', :body_file => '/root/install.post.log' }) } -%>
+else
+  echo "calling home: build failed!"
+  <%= indent(2, skip1: true, skip_content: 'EOF') { snippet('built', :variables => { :endpoint => 'failed', :method => 'POST', :body_file => '/root/install.post.log' }) } -%>
+fi
+
+sync
 %end
