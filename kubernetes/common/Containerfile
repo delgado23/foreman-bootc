@@ -62,6 +62,15 @@ COPY kubernetes/files/containerd-config.toml /etc/containerd/config.toml
 RUN sed -i 's/^FirewallBackend=.*/FirewallBackend=iptables/' /etc/firewalld/firewalld.conf \
  && grep -q '^FirewallBackend=iptables' /etc/firewalld/firewalld.conf
 
+# --- /usr/local on writable /var --------------------------------------------
+# The base image ships /usr/local as a real directory on the read-only ostree
+# root, but the cluster tooling (Helm, and therefore the entire add-ons phase
+# which calls /usr/local/bin/helm) installs binaries into /usr/local/bin at
+# runtime. Replace it with the ostree-standard symlink to writable /var/usrlocal;
+# usrlocal.conf (tmpfiles) creates the bin skeleton at boot.
+RUN rm -rf /usr/local && ln -s ../var/usrlocal /usr/local
+COPY kubernetes/files/usrlocal.conf /usr/lib/tmpfiles.d/usrlocal.conf
+
 # --- CNI plugin bin dir on writable /var ------------------------------------
 # kubernetes-cni installs the base CNI plugins to /opt/cni/bin, but on an ostree
 # host the deployment root (incl. /opt) is read-only, so flannel's
