@@ -1,0 +1,9 @@
+[Unit]
+Description=Report bootc status to subscription-manager as Katello facts
+ConditionPathExists=/usr/bin/bootc
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/bootc-rhsm-facts

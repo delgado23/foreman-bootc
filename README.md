@@ -66,6 +66,24 @@ host = choose any other group (or none). Set up by
 the OS *default* — that forces bootc on every AlmaLinux 10 host (incl. existing
 RPM/Kubernetes groups that rely on the default).
 
+## bootc hosts can't be configured via %post — bake it into the image
+
+On a bootc/ostree host `/root -> var/roothome` and `/home -> var/home`, and
+`/var` is initialized separately at first boot. So anything Anaconda's `%post`
+writes under `/var` (e.g. the `remote_execution_ssh_keys` snippet putting the
+rex key in `/root/.ssh`) is **lost** on first boot. Image-mode config must live
+in the image:
+
+- **Remote execution SSH:** the proxy rex pubkey is baked to
+  `/usr/share/foreman-rex/root.keys` with an sshd `AuthorizedKeysFile` drop-in
+  (see `image/`), and the `AlmaLinux 10/Image Mode` host group sets
+  `remote_execution_ssh_user=root` (rex's global user is `ansible`, which we
+  don't bake). rex then connects as root using the in-image key.
+- **Image-mode facts:** AlmaLinux's subscription-manager has no bootc fact
+  collector, so `image/bootc-rhsm-facts` (a systemd timer) writes
+  `bootc.booted.image` etc. to `/etc/rhsm/facts/bootc.facts` on boot + every
+  30 min. That's what lights up the booted/staged/rollback cards.
+
 ## Gotchas learned the hard way
 
 - **Push path is 3-part**: `<org_label>/<product_label>/<name>`, lowercased.

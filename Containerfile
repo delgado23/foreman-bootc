@@ -30,9 +30,23 @@ RUN dnf -y install \
 # --- Services --------------------------------------------------------------
 RUN systemctl enable qemu-guest-agent sshd
 
-# --- Config baked into the image (example) ---------------------------------
-# Drop-in files, sysctls, etc. live in the image so they're immutable per host.
-# COPY etc/ /etc/
+# --- Foreman remote execution (SSH as root) --------------------------------
+# %post key injection lands under /var (/root -> var/roothome, /home -> var/home)
+# and does NOT survive the bootc first-boot /var init, so trust the proxy's rex
+# public key from /usr instead. Pair with host-group param
+# remote_execution_ssh_user=root so rex connects as root directly (no sudo user).
+COPY image/foreman-rex.root.keys /usr/share/foreman-rex/root.keys
+COPY image/sshd-foreman-rex.conf /etc/ssh/sshd_config.d/10-foreman-rex.conf
+
+# --- bootc -> Katello image-mode facts -------------------------------------
+# AlmaLinux's subscription-manager has no bootc fact collector; generate
+# bootc.booted.image etc. on boot + every 30 min so Katello sees image mode.
+COPY image/bootc-rhsm-facts /usr/libexec/bootc-rhsm-facts
+COPY image/bootc-rhsm-facts.service /usr/lib/systemd/system/bootc-rhsm-facts.service
+COPY image/bootc-rhsm-facts.timer /usr/lib/systemd/system/bootc-rhsm-facts.timer
+RUN chmod 0644 /usr/share/foreman-rex/root.keys /etc/ssh/sshd_config.d/10-foreman-rex.conf \
+ && chmod 0755 /usr/libexec/bootc-rhsm-facts \
+ && systemctl enable bootc-rhsm-facts.timer
 
 # Clean build leftovers from /tmp and /var/tmp. We deliberately do NOT touch
 # /run: bootc mounts it as tmpfs at boot (build-time content is masked anyway),

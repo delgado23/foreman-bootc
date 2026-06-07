@@ -1,0 +1,29 @@
+#!/usr/bin/python3
+"""Report `bootc status` to subscription-manager as custom facts so Katello
+recognizes this host as image-mode (bootc.booted.image, .digest, staged, etc.).
+AlmaLinux's subscription-manager has no built-in bootc fact collector."""
+import json, os, subprocess
+
+try:
+    raw = subprocess.check_output(["bootc", "status", "--format", "json"])
+    status = json.loads(raw).get("status", {})
+except Exception:
+    raise SystemExit(0)
+
+facts = {}
+for kind in ("booted", "staged", "rollback"):
+    node = status.get(kind) or {}
+    image = node.get("image") or {}
+    ref = (image.get("image") or {}).get("image")
+    digest = image.get("imageDigest")
+    if ref:
+        facts["bootc.%s.image" % kind] = ref
+    if digest:
+        facts["bootc.%s.digest" % kind] = digest
+
+os.makedirs("/etc/rhsm/facts", exist_ok=True)
+with open("/etc/rhsm/facts/bootc.facts", "w") as fh:
+    json.dump(facts, fh)
+
+subprocess.call(["subscription-manager", "facts", "--update"],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)

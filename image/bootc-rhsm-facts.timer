@@ -1,0 +1,10 @@
+[Unit]
+Description=Periodically report bootc status to Katello
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=30min
+Persistent=true
+
+[Install]
+WantedBy=timers.target
