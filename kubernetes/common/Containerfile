@@ -62,6 +62,16 @@ COPY kubernetes/files/containerd-config.toml /etc/containerd/config.toml
 RUN sed -i 's/^FirewallBackend=.*/FirewallBackend=iptables/' /etc/firewalld/firewalld.conf \
  && grep -q '^FirewallBackend=iptables' /etc/firewalld/firewalld.conf
 
+# --- flexvolume dir (kube-controller-manager hostPath) ----------------------
+# kubeadm's kube-controller-manager static pod mounts
+# /usr/libexec/kubernetes/kubelet-plugins/volume/exec as a hostPath with
+# type=DirectoryOrCreate. On an ostree host /usr is immutable, so the kubelet
+# cannot create it at runtime and the KCM pod never starts (kubeadm init then
+# fails: "kube-controller-manager is not healthy ... 10257: connection
+# refused"). Bake the directory so it already exists (read-only is fine —
+# flexvolume is deprecated/unused here, CSI handles storage).
+RUN mkdir -p /usr/libexec/kubernetes/kubelet-plugins/volume/exec
+
 # --- Permissions + services -------------------------------------------------
 RUN chmod 0644 /etc/modules-load.d/k8s.conf /etc/sysctl.d/k8s.conf /etc/containerd/config.toml \
  && chmod 0600 /usr/lib/systemd/system/kubelet.service \
