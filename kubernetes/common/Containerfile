@@ -94,6 +94,14 @@ RUN mv /opt/cni/bin /usr/lib/cni \
 # flexvolume is deprecated/unused here, CSI handles storage).
 RUN mkdir -p /usr/libexec/kubernetes/kubelet-plugins/volume/exec
 
+# --- Disable kdump ----------------------------------------------------------
+# kdump.service fails on these nodes ("No memory reserved for crash kernel":
+# crashkernel reservation yields kexec_crash_size=0 on the small-RAM EFI VMs),
+# leaving a permanent failed unit. Crash dumps aren't useful on ephemeral k8s
+# nodes (and kdump can't rebuild its initramfs on a read-only ostree root), so
+# mask it.
+RUN systemctl mask kdump.service
+
 # --- Permissions + services -------------------------------------------------
 RUN chmod 0644 /etc/modules-load.d/k8s.conf /etc/sysctl.d/k8s.conf /etc/containerd/config.toml \
  && chmod 0600 /usr/lib/systemd/system/kubelet.service \
