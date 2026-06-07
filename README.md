@@ -45,6 +45,27 @@ Then create a host on AlmaLinux 10 with host parameter:
 ostreecontainer = foreman.garaventaville.com/garaventaville/bootc/almalinux10-bootc:10.0
 ```
 
+## Switching between image-mode (bootc) and RPM hosts
+
+Foreman picks provisioning templates by precedence (most specific wins):
+1. **Template Combination** — binds a template to a host group (± environment)
+2. **OS default template** — the per-OS fallback
+
+There is no per-host template dropdown, so **the host group is the toggle**:
+
+- **RPM (default):** any normal AlmaLinux 10 host group → stock `Kickstart
+  default` / `Kickstart default PXEGrub2` (the OS default).
+- **bootc (opt-in):** put the host in host group **`AlmaLinux 10/Image Mode`**
+  (id 31). Template combinations there select the bootc Kickstart + PXEGrub2,
+  and the group sets `ostreecontainer`, `ansible_pkg_mgr=dnf`,
+  `kt_activation_keys`.
+
+So building a bootc host = choose the `Image Mode` host group; building an RPM
+host = choose any other group (or none). Set up by
+`foreman/setup_image_mode_hostgroup.rb`. NOTE: don't set the bootc templates as
+the OS *default* — that forces bootc on every AlmaLinux 10 host (incl. existing
+RPM/Kubernetes groups that rely on the default).
+
 ## Gotchas learned the hard way
 
 - **Push path is 3-part**: `<org_label>/<product_label>/<name>`, lowercased.
