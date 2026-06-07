@@ -24,8 +24,9 @@ description: |
   install_tree = @host.operatingsystem.medium_uri(@host)
 
   # Extra kernel args from host param; accept an array or a plain string.
+  # Duck-type instead of is_a?(Array): safemode forbids the Array constant.
   custom = host_param('kickstart_kernel_custom_options')
-  custom = custom.join(' ') if custom.is_a?(Array)
+  custom = custom.join(' ') if custom.respond_to?(:join)
   custom = custom.to_s
 
   # Only derive inst.stage2 if the param didn't already supply it.
