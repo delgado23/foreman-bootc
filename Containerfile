@@ -11,6 +11,7 @@ LABEL org.opencontainers.image.title="almalinux10-bootc" \
 # Everything a host needs goes here, NOT into per-host kickstart. Rebuild +
 # re-push to ship changes; hosts pick them up via `bootc upgrade`.
 RUN dnf -y install \
+        subscription-manager \
         qemu-guest-agent \
         vim-enhanced \
         tmux \
@@ -20,9 +21,11 @@ RUN dnf -y install \
     && rm -rf /var/cache/dnf /var/lib/dnf/history.sqlite* \
               /var/log/dnf* /var/log/hawkey.log
 
-# subscription-manager is required so Foreman/Katello sees this as image-mode.
-# It ships in the AlmaLinux bootc base; install explicitly if you ever slim it:
-# RUN dnf -y install subscription-manager && dnf clean all
+# subscription-manager is NOT in the AlmaLinux bootc base, but Foreman/Katello
+# registration (the %post redhat_register snippet) needs it to register the host
+# and upload the bootc facts that mark it as an image-mode host. firewalld is
+# likewise absent — the bootc kickstart omits the `firewall` directive rather
+# than installing it (manage host firewall in the image if you want one).
 
 # --- Services --------------------------------------------------------------
 RUN systemctl enable qemu-guest-agent sshd

@@ -70,12 +70,9 @@ end
 -%>
 
 rootpw --iscrypted <%= root_pass %>
-<%# Firewall -%>
-<% if host_param_true?('disable-firewall') -%>
-firewall --disable
-<% else -%>
-firewall --service=ssh
-<% end -%>
+<%# No `firewall` directive: firewalld (firewall-offline-cmd) is not in the
+    AlmaLinux 10 bootc base, and the command fails Anaconda. Manage the firewall
+    in the image if you need one. -%>
 <%# Authentication options -%>
 <% if (is_fedora && os_major >= 28) || (rhel_compatible && os_major > 7) -%>
 authselect --useshadow --passalgo=<%= @host.operatingsystem.password_hash.downcase || 'sha256' %> --kickstart
