@@ -74,11 +74,13 @@ writes under `/var` (e.g. the `remote_execution_ssh_keys` snippet putting the
 rex key in `/root/.ssh`) is **lost** on first boot. Image-mode config must live
 in the image:
 
-- **Remote execution SSH:** the proxy rex pubkey is baked to
-  `/usr/share/foreman-rex/root.keys` with an sshd `AuthorizedKeysFile` drop-in
-  (see `image/`), and the `AlmaLinux 10/Image Mode` host group sets
-  `remote_execution_ssh_user=root` (rex's global user is `ansible`, which we
-  don't bake). rex then connects as root using the in-image key.
+- **Management SSH (root):** the Foreman rex pubkey **and** the Ascender/AWX
+  "Global Root" pubkey are baked to `/usr/share/foreman-rex/root.keys` with an
+  sshd `AuthorizedKeysFile` drop-in (see `image/foreman-rex.root.keys`), so both
+  systems can SSH in as root from first boot. The `AlmaLinux 10/Image Mode` host
+  group sets `remote_execution_ssh_user=root` (rex's global user is `ansible`,
+  which we don't bake); Ascender's machine credential is already `root`. Add any
+  other management system's key to that file and `bootc upgrade`.
 - **Image-mode facts:** AlmaLinux's subscription-manager has no bootc fact
   collector, so `image/bootc-rhsm-facts` (a systemd timer) writes
   `bootc.booted.image` etc. to `/etc/rhsm/facts/bootc.facts` on boot + every

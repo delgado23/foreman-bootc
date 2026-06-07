@@ -55,11 +55,13 @@ RUN dnf -y install subscription-manager \
 # --- Services --------------------------------------------------------------
 RUN systemctl enable qemu-guest-agent sshd
 
-# --- Foreman remote execution (SSH as root) --------------------------------
+# --- Management SSH (root) keys: Foreman rex + Ascender/AWX -----------------
 # %post key injection lands under /var (/root -> var/roothome, /home -> var/home)
-# and does NOT survive the bootc first-boot /var init, so trust the proxy's rex
-# public key from /usr instead. Pair with host-group param
-# remote_execution_ssh_user=root so rex connects as root directly (no sudo user).
+# and does NOT survive the bootc first-boot /var init, so the management systems'
+# public keys are baked into /usr instead (see image/foreman-rex.root.keys).
+# Foreman rex pairs with host-group param remote_execution_ssh_user=root;
+# Ascender uses its "Global Root" machine credential (user root). Both SSH in as
+# root via these keys from first boot.
 COPY image/foreman-rex.root.keys /usr/share/foreman-rex/root.keys
 COPY image/sshd-foreman-rex.conf /etc/ssh/sshd_config.d/10-foreman-rex.conf
 
