@@ -9,33 +9,22 @@ description: |
 
   The bootc payload is installed by `ostreecontainer` in the kickstart, but
   Anaconda's installer RUNTIME (stage2 = images/install.img) still has to be
-  fetched over the network. That is what `inst.stage2` provides here.
+  fetched over the network. We supply it as `inst.stage2=<medium_uri>`, where
+  `medium_uri` is the jail-safe renderer macro for the install tree (the synced
+  AlmaLinux 10 BaseOS kickstart repo selected on the host). The OS-method form
+  `@host.operatingsystem.medium_uri` does NOT exist in this Katello.
 
-  stage2 is auto-derived from the host's assigned installation medium (the
-  synced AlmaLinux 10 BaseOS kickstart repo). If you'd rather pin it, set host
-  parameter `kickstart_kernel_custom_options` to include inst.stage2=... and
-  this template will use that and skip the derived value.
+  ks= / network / BOOTIF and any `kickstart_kernel_custom_options` host param
+  come from the stock `kickstart_kernel_options` snippet, exactly like the
+  default PXEGrub2 template.
 
-  NOTE: this is the UEFI (linuxefi/initrdefi) variant — correct for modern
-  AlmaLinux 10 VMs. For legacy BIOS hosts, use a PXELinux template instead.
-%>
-<%
-  # Install tree containing the Anaconda stage2 image (images/install.img).
-  install_tree = @host.operatingsystem.medium_uri(@host)
-
-  # Extra kernel args from host param; accept an array or a plain string.
-  # Duck-type instead of is_a?(Array): safemode forbids the Array constant.
-  custom = host_param('kickstart_kernel_custom_options')
-  custom = custom.join(' ') if custom.respond_to?(:join)
-  custom = custom.to_s
-
-  # Only derive inst.stage2 if the param didn't already supply it.
-  stage2 = custom.include?('inst.stage2') ? '' : "inst.stage2=#{install_tree}"
+  NOTE: UEFI (linuxefi/initrdefi) variant — the VM must use OVMF firmware.
+  Legacy BIOS hosts need a PXELinux template instead.
 %>
 set default=0
 set timeout=10
 
 menuentry 'Provision <%= @host.name %> (AlmaLinux 10 image-mode)' --id provision {
-  linuxefi <%= @kernel %> ks=<%= foreman_url('provision') %> inst.ks.sendmac <%= stage2 %> <%= pxe_kernel_options %> <%= custom %>
+  linuxefi <%= @kernel %> <%= pxe_kernel_options %> inst.stage2=<%= medium_uri %> <%= snippet("kickstart_kernel_options").strip %>
   initrdefi <%= @initrd %>
 }
