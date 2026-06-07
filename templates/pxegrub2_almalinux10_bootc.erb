@@ -1,0 +1,40 @@
+<%#
+kind: PXEGrub2
+name: AlmaLinux 10 bootc PXEGrub2
+model: ProvisioningTemplate
+oses:
+- AlmaLinux 10
+description: |
+  UEFI (PXEGrub2) boot entry for AlmaLinux 10 image-mode (bootc) provisioning.
+
+  The bootc payload is installed by `ostreecontainer` in the kickstart, but
+  Anaconda's installer RUNTIME (stage2 = images/install.img) still has to be
+  fetched over the network. That is what `inst.stage2` provides here.
+
+  stage2 is auto-derived from the host's assigned installation medium (the
+  synced AlmaLinux 10 BaseOS kickstart repo). If you'd rather pin it, set host
+  parameter `kickstart_kernel_custom_options` to include inst.stage2=... and
+  this template will use that and skip the derived value.
+
+  NOTE: this is the UEFI (linuxefi/initrdefi) variant — correct for modern
+  AlmaLinux 10 VMs. For legacy BIOS hosts, use a PXELinux template instead.
+%>
+<%
+  # Install tree containing the Anaconda stage2 image (images/install.img).
+  install_tree = @host.operatingsystem.medium_uri(@host)
+
+  # Extra kernel args from host param; accept an array or a plain string.
+  custom = host_param('kickstart_kernel_custom_options')
+  custom = custom.join(' ') if custom.is_a?(Array)
+  custom = custom.to_s
+
+  # Only derive inst.stage2 if the param didn't already supply it.
+  stage2 = custom.include?('inst.stage2') ? '' : "inst.stage2=#{install_tree}"
+%>
+set default=0
+set timeout=10
+
+menuentry 'Provision <%= @host.name %> (AlmaLinux 10 image-mode)' --id provision {
+  linuxefi <%= @kernel %> ks=<%= foreman_url('provision') %> inst.ks.sendmac <%= stage2 %> <%= pxe_kernel_options %> <%= custom %>
+  initrdefi <%= @initrd %>
+}

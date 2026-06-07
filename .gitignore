@@ -1,0 +1,9 @@
+# build / runtime cruft
+*.log
+*.tmp
+*.swp
+
+# never commit registry credentials or pull secrets
+auth.json
+.netrc
+*secret*

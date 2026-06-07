@@ -1,0 +1,100 @@
+<%#
+kind: provision
+name: AlmaLinux 10 bootc Kickstart
+model: ProvisioningTemplate
+oses:
+- AlmaLinux 10
+description: |
+  Image-mode (bootc) provisioning template for AlmaLinux 10.
+
+  Replaces the standard package install (url / repo / %packages) with the
+  Anaconda `ostreecontainer` command, which pulls a bootc OCI image from the
+  Katello internal registry and deploys it as an ostree-based, immutable OS.
+
+  REQUIRED host parameter:
+    ostreecontainer        full image ref, e.g.
+                           foreman.garaventaville.com/MYORG/Library/almalinux10-bootc:10.0
+
+  OPTIONAL host parameters:
+    bootc_registry_auth    base64 "user:pass" for a private registry (mark "Hidden/encrypted")
+    bootc_skip_sig_check   boolean; default true (internal Katello registry has no sigstore)
+    kt_activation_keys     activation key(s) for subscription-manager registration
+    lang / keyboard / time-zone / bootloader-append   optional overrides
+
+  COMPANION PXE template:
+    The PXELinux/PXEGrub2 template must add the install tree via the kernel arg
+      inst.stage2=<EL10 BaseOS install tree URL>
+    Set host parameter `kickstart_kernel_custom_options` to inject it, e.g.
+      ["inst.stage2=http://foreman.garaventaville.com/pulp/content/MYORG/Library/.../BaseOS/"]
+
+  NOTE: there is intentionally NO %packages section — `ostreecontainer` installs
+  the entire OS from the container image, and Anaconda rejects %packages with it.
+%>
+<%
+  # ----- derived values -----------------------------------------------------
+  ostree_img    = @host.params['ostreecontainer']
+  skip_sig      = @host.params['bootc_skip_sig_check']
+  skip_sig      = true if skip_sig.nil?                 # default: skip for internal registry
+  reg_auth      = @host.params['bootc_registry_auth']
+  registry_host = ostree_img.to_s.split('/').first      # = your Foreman/Katello host
+  ca_url        = "http://#{registry_host}/pub/katello-server-ca.crt"
+%>
+# === AlmaLinux 10 image-mode (bootc) install ================================
+text
+reboot
+# eula --agreed
+
+lang <%= @host.params['lang'] || 'en_US.UTF-8' %>
+keyboard <%= @host.params['keyboard'] || 'us' %>
+timezone <%= @host.params['time-zone'] || 'UTC' %> --utc
+
+# Networking (renders static/DHCP per NIC from Foreman host config)
+<%= snippet 'kickstart_networking_setup' %>
+
+rootpw --iscrypted <%= root_pass %>
+selinux --enforcing
+services --enabled=sshd
+# If `firewall --service=ssh` errors during install, drop the --service flag.
+firewall --enabled --service=ssh
+
+# Disk layout comes from the host's assigned partition table (the stock
+# "Kickstart default" ptable works: zerombr / clearpart --all / autopart).
+<%= @host.diskLayout %>
+bootloader --location=mbr --append="<%= @host.params['bootloader-append'] || 'rhgb quiet' %>"
+
+# ----- bootc image source (this is the key line) ---------------------------
+ostreecontainer --url=<%= ostree_img %><%= ' --no-signature-verification' if skip_sig %>
+
+# === Pre-install: trust the internal registry / write pull secret ==========
+%pre --log=/tmp/ks-pre.log
+# Trust the Katello server CA inside the Anaconda installer environment so the
+# ostreecontainer pull over TLS succeeds.
+curl -sk -o /etc/pki/ca-trust/source/anchors/katello-server-ca.crt <%= ca_url %> \
+  && update-ca-trust extract
+<% if reg_auth -%>
+# Pull secret for a private registry (consumed by ostreecontainer).
+mkdir -p /etc/ostree
+cat > /etc/ostree/auth.json <<'AUTH_EOF'
+{"auths":{"<%= registry_host %>":{"auth":"<%= reg_auth %>"}}}
+AUTH_EOF
+chmod 600 /etc/ostree/auth.json
+<% end -%>
+%end
+
+# === Post-install: register, push rex keys, signal Foreman =================
+%post --log=/root/ks-post.log
+# Register to Katello via subscription-manager. This is what makes the host
+# show up as an image-mode host (Katello reads bootc facts after registration).
+<%= snippet 'redhat_register' %>
+
+# Enable repos so subscription/errata data uploads (image-mode hosts still
+# report facts even though package actions are disabled on them).
+subscription-manager repos --enable '*' 2>/dev/null || true
+
+# Inject Foreman remote-execution SSH key(s) so bootc upgrade/switch/rollback
+# jobs can run later.
+<%= snippet 'remote_execution_ssh_keys' %>
+
+# Tell Foreman the build is done (renders the call to the 'built' URL).
+<%= snippet 'kickstart_done' %>
+%end
