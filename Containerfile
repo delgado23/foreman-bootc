@@ -15,6 +15,13 @@ LABEL org.opencontainers.image.title="almalinux10-bootc" \
 # activation key supply the repo set (BaseOS/AppStream/CRB/EPEL/Duo/Foreman
 # client/...). A failed build may leave an orphaned Katello consumer to clean up.
 #
+# The base image ships the public AlmaLinux mirror repos as
+# /etc/yum.repos.d/almalinux*.repo. We delete them so the shipped image carries
+# NO public repos — only the Katello redhat.repo, which subscription-manager
+# regenerates on the registered host from the Foreman activation key. (The
+# install above already ignores them via --disablerepo='*'; this stops them from
+# riding along into the deployed system.)
+#
 # NOTE: certbot + python3-certbot-dns-cloudflare are intentionally omitted —
 # EPEL upstream currently ships a broken python3-pyOpenSSL (requires
 # cryptography >=46, not in EL10). Re-add them once EPEL fixes it + you re-sync.
@@ -46,6 +53,7 @@ RUN dnf -y install subscription-manager \
         katello-host-tools-tracer \
  && { subscription-manager unregister || true; } \
  && { subscription-manager clean || true; } \
+ && rm -f /etc/yum.repos.d/almalinux*.repo \
  && dnf clean all \
  && rm -rf /var/cache/dnf /var/lib/dnf/history.sqlite* /var/log/dnf* /var/log/hawkey.log
 

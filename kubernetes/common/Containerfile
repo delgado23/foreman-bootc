@@ -11,7 +11,7 @@
 #
 # Build context is the repo root (so the COPY paths below resolve):
 #   podman build -t kubernetes-common:1.35.5 -f kubernetes/common/Containerfile .
-FROM foreman.garaventaville.com/garaventaville/bootc/almalinux10-bootc:10.0
+FROM foreman.garaventaville.com/garaventaville/bootc/almalinux10-bootc:10
 
 LABEL org.opencontainers.image.title="kubernetes-common" \
       org.opencontainers.image.description="Shared Kubernetes node layer (containerd + kubelet/kubeadm/kubectl) for the Garaventaville fleet" \
