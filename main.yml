@@ -188,6 +188,11 @@
       delegate_to: localhost
       run_once: true
 
+    # Tolerate hosts that are already gone: the find/delete is a snapshot, so a
+    # host can disappear between the search above and this delete (a concurrent
+    # run, or Foreman dropping the consumer when the in-build unregister lands).
+    # A 404 / "not found" then is the desired end state, not a failure — only a
+    # real error (auth, 422, 5xx) should fail the task.
     - name: Delete orphaned build hosts
       theforeman.foreman.host:
         name: "{{ item }}"
@@ -197,3 +202,9 @@
         label: "{{ item }}"
       delegate_to: localhost
       run_once: true
+      register: orphan_delete
+      failed_when:
+        - orphan_delete is failed
+        - "'404' not in (orphan_delete.msg | default(''))"
+        - "'not found' not in (orphan_delete.msg | default('') | lower)"
+        - "'does not exist' not in (orphan_delete.msg | default('') | lower)"
