@@ -188,23 +188,25 @@
       delegate_to: localhost
       run_once: true
 
-    # Tolerate hosts that are already gone: the find/delete is a snapshot, so a
-    # host can disappear between the search above and this delete (a concurrent
-    # run, or Foreman dropping the consumer when the in-build unregister lands).
-    # A 404 / "not found" then is the desired end state, not a failure — only a
-    # real error (auth, 422, 5xx) should fail the task.
-    - name: Delete orphaned build hosts
-      theforeman.foreman.host:
-        name: "{{ item }}"
-        state: absent
-      loop: "{{ unmanaged_hosts_info.resources | map(attribute='name') | select('match', '^[0-9a-f]{12}$') | list }}"
+    # Delete by host ID via the Foreman API, NOT theforeman.foreman.host: that
+    # module validates `name` as an FQDN and rejects the bare 12-char container
+    # IDs ("The hostname must be FQDN") before it ever calls Foreman, so it can
+    # never remove these orphans. The search above already returns each host's id,
+    # so DELETE /api/hosts/<id> directly. status_code accepts 404 so a host that
+    # vanished between the search and this delete (concurrent run, or Foreman
+    # dropping the consumer as the in-build unregister lands) is the desired end
+    # state, not a failure — a real error (401/422/5xx) still fails the task.
+    - name: Delete orphaned build hosts (by id; the host module rejects non-FQDN names)
+      ansible.builtin.uri:
+        url: "{{ foreman_hostname }}/api/hosts/{{ item.id }}"
+        method: DELETE
+        user: "{{ foreman_username }}"
+        password: "{{ foreman_password }}"
+        force_basic_auth: true
+        validate_certs: false
+        status_code: [200, 202, 204, 404]
+      loop: "{{ unmanaged_hosts_info.resources | selectattr('name', 'match', '^[0-9a-f]{12}$') | list }}"
       loop_control:
-        label: "{{ item }}"
+        label: "{{ item.name }} (id {{ item.id }})"
       delegate_to: localhost
       run_once: true
-      register: orphan_delete
-      failed_when:
-        - orphan_delete is failed
-        - "'404' not in (orphan_delete.msg | default(''))"
-        - "'not found' not in (orphan_delete.msg | default('') | lower)"
-        - "'does not exist' not in (orphan_delete.msg | default('') | lower)"
