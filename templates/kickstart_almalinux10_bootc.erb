@@ -14,9 +14,11 @@ description: |
   build callback) is the stock logic, so it uses snippets that exist here.
 
   The bootc image ref comes from the `ostreecontainer` host parameter, set by
-  the "AlmaLinux 10/Image Mode" host group. Anonymous pull is enabled on the
-  Library lifecycle environment, so no registry credentials are needed.
-  Set `bootc_skip_sig_check=false` only if you configure a sigstore policy.
+  the "AlmaLinux 10/Image Mode" host group. It points at the smoke-test-gated
+  Production content view; anonymous pull is enabled on the Production lifecycle
+  environment, so no registry credentials are needed at install time (Library is
+  private staging). Set `bootc_skip_sig_check=false` only if you configure a
+  sigstore policy.
 -%>
 <%
   rhel_compatible = @host.operatingsystem.family == 'Redhat' && @host.operatingsystem.name != 'Fedora'

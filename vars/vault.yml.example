@@ -14,3 +14,9 @@
 # loosely — keep it out of git).
 registry_username: <katello-registry-username>
 registry_password: <katello-registry-password>
+
+# Foreman API credentials for the publish/promote-to-Production play (the smoke
+# gate in main.yml). A Foreman user with content-view publish + promote rights.
+foreman_hostname: https://foreman.garaventaville.com
+foreman_username: <foreman-api-username>
+foreman_password: <foreman-api-password>

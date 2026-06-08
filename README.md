@@ -26,10 +26,13 @@ templates/
   pxegrub2_almalinux10_bootc.erb    UEFI boot entry: supplies inst.stage2
 foreman/
   create_product.rb      create the Katello "bootc" product (correct, via dynflow)
+  setup_content_view.rb  create the gated "bootc" content view, publish + promote
+  set_unauth_pull.rb     move anonymous pull from Library (staging) to Production
   load_templates.rb      load both templates into Foreman + set as OS defaults
   ops/                   one-off recovery/inspection scripts (incident reference)
+                         (incl. inspect_content_view.rb — read-only CV/path report)
 main.yml                 Ansible playbook: weekly build/test/push of all images
-vars/vault.yml           registry creds for the weekly build (Ansible Vault, encrypted)
+vars/vault.yml           registry + Foreman API creds for the weekly build (Vault, encrypted)
 ascender/
   setup_weekly_builds.py idempotent Ascender API setup (project + JT + schedule)
 ```
@@ -45,15 +48,27 @@ Built on **nexus.garaventaville.com** as the rootless user `bootcbuild`
 ```bash
 # on nexus, as bootcbuild, in ~/build
 podman login foreman.garaventaville.com
-./build-push.sh 10.0      # -> foreman.garaventaville.com/garaventaville/bootc/almalinux10-bootc:10.0
+./build-push.sh           # detects the AlmaLinux release (e.g. 10.2) from the image and pushes
+                          #   :10  (floating — what hosts pin)  :10.2  (release)
 ./prune.sh
 ```
 
-Then create a host on AlmaLinux 10 with host parameter:
+The base image tag **follows the AlmaLinux release**: `build-push.sh` reads
+`VERSION_ID` from the built image and tags `:<release>` (e.g. `10.2`) plus the
+floating `:<major>` (`10`). The `AlmaLinux 10/Image Mode` host group pins `:10`,
+so hosts auto-follow the newest gated point release. Pass a release explicitly to
+override the detection: `./build-push.sh 10.2`.
 
-```
-ostreecontainer = foreman.garaventaville.com/garaventaville/bootc/almalinux10-bootc:10.0
-```
+`build-push.sh` pushes into the **Library** environment and (with `SMOKE_PULL=1`,
+the default) re-pulls the image and re-checks it. Library is private staging; the
+image becomes installable only once promoted to **Production** (the weekly build
+does this on a passing smoke test — see below).
+
+To build a host, put it in the `AlmaLinux 10/Image Mode` host group — it sets the
+`ostreecontainer` param for you, pointed at the **Production** content-view path
+(set by `foreman/setup_image_mode_hostgroup.rb`, which resolves the promoted path
+from Katello). Don't set `ostreecontainer` to the raw `…/garaventaville/bootc/…`
+Library path by hand; that bypasses the gate.
 
 ## Kubernetes node images
 
@@ -98,12 +113,22 @@ All four images are rebuilt, smoke-tested, and pushed once a week by Ascender
 (`https://ascender.garaventaville.com`) so they pick up upstream security/package
 updates under their pinned tags. The job runs `main.yml` against
 `nexus.garaventaville.com`, becoming the rootless `bootcbuild` user and reusing the
-same `build-push.sh` / `build-push-k8s.sh` scripts (which build → smoke-test → push).
+same `build-push.sh` / `build-push-k8s.sh` scripts (which build → push to Library →
+re-pull from the registry and re-check).
 
-Each run publishes **two tags per image**: the pinned tag (`10.0`, `1.35.5` —
-overwritten weekly so hosts tracking the pin get the refresh) and a dated tag
-(`10.0-20260607`, `1.35.5-20260607` — an immutable weekly snapshot for rollback).
-The scripts honor `EXTRA_TAGS="<tag> [tag...]"` for the extra tags.
+**The promotion gate:** each script pushes to **Library** (private staging) and
+then pull-back-smoke-tests the pushed image. Only if every smoke test passes does
+the final `main.yml` play publish the `bootc` content view and **promote it to
+Production** (via the `theforeman.foreman` collection). Ansible aborts the run on
+the first failed task, so a failed smoke test stops everything *before* promotion
+and Production keeps its prior good version. Production is what hosts install from.
+
+Each run publishes a refreshed pinned tag plus an immutable dated snapshot. For
+the **base image** that is three tags: the floating `:10` (what hosts pin), the
+detected release `:10.2`, and the snapshot `:10.2-20260607`. For the **k8s
+images** it is the two tags `:1.35.5` and `:1.35.5-20260607` (the tag is the
+Kubernetes version — see below). `build-push.sh` honors `DATE_STAMP` for the
+dated snapshot; both scripts honor `EXTRA_TAGS="<tag> [tag...]"` for ad-hoc tags.
 
 ```
 main.yml                target nexus, sudo -> bootcbuild, git pull, login,
@@ -114,10 +139,14 @@ ascender/setup_weekly_builds.py   creates the Ascender objects via the API
 
 **One-time setup**
 
-1. **Registry creds** — `cp vars/vault.yml.example vars/vault.yml`, fill in the
-   Katello registry user/password, then `ansible-vault encrypt vars/vault.yml`
-   using the password of the Vault credential the job will attach (`linux
-   provisiong` by default). Commit the encrypted file.
+1. **Registry + Foreman creds** — `cp vars/vault.yml.example vars/vault.yml`, fill
+   in the Katello registry user/password **and** the Foreman API user/password
+   (`foreman_username`/`foreman_password`/`foreman_hostname`, used by the
+   publish/promote play; the user needs content-view publish + promote rights),
+   then `ansible-vault encrypt vars/vault.yml` using the password of the Vault
+   credential the job will attach (`linux provisiong` by default). Commit the
+   encrypted file. The Ascender execution environment must have the
+   `theforeman.foreman` collection (the `foreman-content-views` job already uses it).
 2. **Build host** — ensure the Ascender machine credential (`Ansible User`) can
    `sudo` to `bootcbuild` on nexus, and lingering is on so rootless podman has a
    runtime dir: `loginctl enable-linger bootcbuild`.
@@ -133,6 +162,34 @@ ascender/setup_weekly_builds.py   creates the Ascender objects via the API
    Re-running is safe (find-or-create + PATCH). Override cadence with
    `--weekday/--hour/--minute/--timezone`, or the Vault credential with
    `--vault-credential`.
+
+## Content-view gating (one-time Foreman setup)
+
+The `bootc` content view (Library → Production) and the move of anonymous pull to
+Production are set up once, in this order, to avoid an install outage (each step
+runs on Foreman: `sudo foreman-rake console < foreman/<script>.rb`):
+
+1. **Confirm + inspect** — `foreman/ops/inspect_content_view.rb` (read-only):
+   verify the bootc push repos are CV-eligible on this Katello build and capture
+   the Production lifecycle-environment label/id.
+2. **Create the CV** — `foreman/setup_content_view.rb`: creates the `bootc` CV,
+   adds the four push repos, publishes a version, and promotes it to Production.
+   It prints the promoted pull paths.
+3. **Enable Production pull** — `foreman/set_unauth_pull.rb`: enables anonymous
+   pull on Production. It leaves Library pullable for now (it only locks Library
+   down once the host-group refs point at Production — see step 5), so in-flight
+   provisions don't break.
+4. **Repoint refs** — `setup_image_mode_hostgroup.rb` and
+   `setup_kubernetes_image_mode.rb` resolve the Production path from Katello and
+   update the host-group `ostreecontainer` params. **Provision one test bootc
+   host** and confirm `%pre` pulls anonymously from the Production path.
+5. **Lock down Library** — re-run `foreman/set_unauth_pull.rb`. Now that the refs
+   point at Production it sets Library `unauth_pull=false`. (The script is
+   self-sequencing on the Image Mode host group's `ostreecontainer` value, so the
+   order is enforced — no env flags, which `foreman-rake` would strip anyway.)
+
+From then on the weekly Ascender build keeps Production current behind the smoke
+gate.
 
 ## Switching between image-mode (bootc) and RPM hosts
 
@@ -212,5 +269,8 @@ reverts pyOpenSSL and you re-sync the EPEL repo.
   when the repo's `unprotected=true`. Pull authorization is per *lifecycle
   environment* (`KTEnvironment#registry_unauthenticated_pull`, checked live in
   `registry_proxies_controller.rb`). Anaconda pulls in `%pre` *before* the host
-  registers, so we enabled unauthenticated pull on **Library** (see
-  `foreman/enable_unauth_pull.rb`) — no creds needed in the kickstart.
+  registers, so the install-time environment must allow unauthenticated pull.
+  That is now **Production** (see `foreman/set_unauth_pull.rb`), not Library:
+  hosts install only the smoke-test-gated content the weekly build promoted to
+  Production. **Library is private staging** (`unauth_pull=false`) — fresh pushes
+  land there but aren't installable until they pass the gate.
