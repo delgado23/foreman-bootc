@@ -13,9 +13,22 @@ hg.locations = parent.locations
 hg.save!
 puts "HOSTGROUP\tid=#{hg.id}\ttitle=#{hg.title}"
 
-# 2. bootc host-group parameters (hosts inherit these)
+# 2. bootc host-group parameters (hosts inherit these).
+# The install-time image is pulled from the smoke-test-gated PRODUCTION content
+# view, not the raw Library push path — so a host only ever installs content that
+# passed the weekly gate. Resolve the real promoted registry path from Katello
+# rather than hardcoding it (the env/CV-qualified path is set by Katello).
+TAG = ENV.fetch('BOOTC_TAG', '10.0')
+cv   = Katello::ContentView.find_by!(organization_id: org.id, label: 'bootc')
+prod = Katello::KTEnvironment.find_by!(organization_id: org.id, label: 'Production')
+repo = Katello::Repository.in_environment(prod).in_content_views([cv])
+                          .detect { |r| r.root&.name == 'almalinux10-bootc' }
+raise "almalinux10-bootc not promoted to Production yet — run setup_content_view.rb" if repo.nil?
+ostree_ref = "foreman.garaventaville.com/#{repo.container_repository_name}:#{TAG}"
+puts "OSTREE_REF\t#{ostree_ref}"
+
 {
-  'ostreecontainer' => 'foreman.garaventaville.com/garaventaville/bootc/almalinux10-bootc:10.0',
+  'ostreecontainer' => ostree_ref,
   'ansible_pkg_mgr' => 'dnf',
   'kt_activation_keys' => 'AlmaLinux 10',
 }.each do |k, v|

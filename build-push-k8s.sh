@@ -87,6 +87,30 @@ for img in "${COMMON}" "${CP}" "${WORKER}"; do
 done
 echo "   Set the controlplane/worker refs as the 'ostreecontainer' host-group param."
 
+# --- Pull-back smoke test (the promotion gate) -----------------------------
+# Re-pull each pushed pinned tag from the registry (Library) and re-run the
+# container checks against the round-tripped artifacts. This gates promotion to
+# Production in the weekly run; a non-zero exit stops the playbook before
+# anything is promoted. Runs BEFORE prune (prune removes local images). Opt out
+# on a manual run with SMOKE_PULL=0.
+if [ "${SMOKE_PULL:-1}" != "0" ]; then
+  COMMON_REF="${REGISTRY}/${ORG}/${PRODUCT}/${COMMON}:${TAG}"
+  CP_REF="${REGISTRY}/${ORG}/${PRODUCT}/${CP}:${TAG}"
+  WORKER_REF="${REGISTRY}/${ORG}/${PRODUCT}/${WORKER}:${TAG}"
+  echo ">> Pull-back smoke test: re-pulling the pushed images from the registry"
+  for ref in "${COMMON_REF}" "${CP_REF}" "${WORKER_REF}"; do
+    podman rmi -f "${ref}" >/dev/null 2>&1 || true
+    podman pull "${ref}"
+  done
+  podman run --rm "${COMMON_REF}" bootc --version
+  podman run --rm "${COMMON_REF}" rpm -q kubeadm kubelet kubectl containerd \
+    && echo "   common pulled OK: kube* + containerd present"
+  podman run --rm "${CP_REF}" rpm -q keepalived haproxy \
+    && echo "   controlplane pulled OK: keepalived + haproxy present"
+  podman run --rm "${WORKER_REF}" rpm -q lvm2 gdisk iscsi-initiator-utils \
+    && echo "   worker pulled OK: lvm2 + gdisk + iscsi present"
+fi
+
 # --- Reclaim disk -----------------------------------------------------------
 if [ -x "${CONTEXT}/prune.sh" ]; then
   echo ">> Pruning build host..."

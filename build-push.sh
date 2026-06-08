@@ -54,6 +54,21 @@ for t in "${ALL_TAGS[@]}"; do
   podman push "${remote}"
 done
 
+# --- Pull-back smoke test (the promotion gate) -----------------------------
+# Re-pull the image we just pushed from the Katello registry (Library) and
+# re-run the container checks against that round-tripped artifact, not the local
+# build. This is what gates promotion to Production in the weekly run; a non-zero
+# exit here stops the playbook before anything is promoted. Opt out of the extra
+# pull on a manual run with SMOKE_PULL=0.
+if [ "${SMOKE_PULL:-1}" != "0" ]; then
+  echo ">> Pull-back smoke test: re-pulling ${REMOTE_REF} from the registry"
+  podman rmi -f "${REMOTE_REF}" >/dev/null 2>&1 || true
+  podman pull "${REMOTE_REF}"
+  podman run --rm "${REMOTE_REF}" bootc --version
+  podman run --rm "${REMOTE_REF}" rpm -q qemu-guest-agent >/dev/null \
+    && echo "   pulled image OK: baked packages present"
+fi
+
 echo ">> Done. Image available at:"
 for t in "${ALL_TAGS[@]}"; do
   echo "     ${REGISTRY}/${ORG}/${PRODUCT}/${IMAGE}:${t}"

@@ -66,6 +66,7 @@
             chdir: "{{ repo_dest }}"
           environment:
             EXTRA_TAGS: "{{ base_tag }}-{{ date_stamp }}"
+            SMOKE_PULL: "1"   # re-pull from the registry and re-check (promotion gate)
           changed_when: true
 
         - name: Build, smoke-test, and push the Kubernetes images (pinned + dated tags)
@@ -74,6 +75,7 @@
             chdir: "{{ repo_dest }}"
           environment:
             EXTRA_TAGS: "{{ k8s_tag }}-{{ date_stamp }}"
+            SMOKE_PULL: "1"   # re-pull from the registry and re-check (promotion gate)
           changed_when: true
       always:
         - name: Log out of the Katello registry
@@ -81,3 +83,29 @@
             cmd: "podman logout {{ registry }}"
           changed_when: true
           failed_when: false
+
+# This play only runs if the build/push/smoke play above succeeded — Ansible
+# aborts the run on the first failed task, so a failed pull-back smoke test stops
+# everything here BEFORE anything is promoted (Production keeps its prior good
+# version). Publishing snapshots the freshly-pushed Library content into a new CV
+# version; promoting it to Production is the gate that makes it installable.
+- name: Promote the smoke-tested bootc images to Production
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars_files:
+    - vars/vault.yml
+  vars:
+    foreman_org: Garaventaville
+  tasks:
+    - name: Publish bootc content view and promote Library -> Production
+      theforeman.foreman.content_view_version:
+        username: "{{ foreman_username }}"
+        password: "{{ foreman_password }}"
+        server_url: "{{ foreman_hostname }}"
+        organization: "{{ foreman_org }}"
+        validate_certs: false
+        content_view: bootc
+        lifecycle_environments:
+          - Library
+          - Production

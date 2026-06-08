@@ -14,14 +14,27 @@
 #
 # Run on foreman:  sudo foreman-rake console < setup_kubernetes_image_mode.rb
 User.current = User.unscoped.find_by!(login: 'admin')
+org = Organization.unscoped.find(4)
 
-REGISTRY = 'foreman.garaventaville.com/garaventaville/bootc'.freeze
-TAG      = ENV.fetch('K8S_TAG', '1.35.5')
+TAG = ENV.fetch('K8S_TAG', '1.35.5')
+
+# Install-time images come from the smoke-test-gated PRODUCTION content view, not
+# the raw Library push path. Resolve the real promoted registry path per image
+# from Katello (the env/CV-qualified path is set by Katello, not hardcoded).
+cv   = Katello::ContentView.find_by!(organization_id: org.id, label: 'bootc')
+prod = Katello::KTEnvironment.find_by!(organization_id: org.id, label: 'Production')
+prod_path = lambda do |image|
+  r = Katello::Repository.in_environment(prod).in_content_views([cv])
+                         .detect { |repo| repo.root&.name == image }
+  raise "#{image} not promoted to Production yet — run setup_content_view.rb" if r.nil?
+  "foreman.garaventaville.com/#{r.container_repository_name}:#{TAG}"
+end
 
 groups = {
-  29 => "#{REGISTRY}/kubernetes-controlplane:#{TAG}",
-  30 => "#{REGISTRY}/kubernetes-worker:#{TAG}",
+  29 => prod_path.call('kubernetes-controlplane'),
+  30 => prod_path.call('kubernetes-worker'),
 }
+groups.each { |id, ref| puts "OSTREE_REF\thg=#{id}\t#{ref}" }
 
 groups.each do |hg_id, image|
   hg = Hostgroup.unscoped.find(hg_id)
