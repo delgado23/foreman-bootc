@@ -118,3 +118,7 @@
           - Production
       delegate_to: localhost
       run_once: true
+      # The job template enables privilege escalation globally (the build block
+      # needs it to sudo to bootcbuild on nexus). This task just calls the Foreman
+      # API from the execution environment, which has no sudo — turn become off.
+      become: false
