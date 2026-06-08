@@ -48,9 +48,16 @@ Built on **nexus.garaventaville.com** as the rootless user `bootcbuild`
 ```bash
 # on nexus, as bootcbuild, in ~/build
 podman login foreman.garaventaville.com
-./build-push.sh 10.0      # -> foreman.garaventaville.com/garaventaville/bootc/almalinux10-bootc:10.0
+./build-push.sh           # detects the AlmaLinux release (e.g. 10.2) from the image and pushes
+                          #   :10  (floating — what hosts pin)  :10.2  (release)
 ./prune.sh
 ```
+
+The base image tag **follows the AlmaLinux release**: `build-push.sh` reads
+`VERSION_ID` from the built image and tags `:<release>` (e.g. `10.2`) plus the
+floating `:<major>` (`10`). The `AlmaLinux 10/Image Mode` host group pins `:10`,
+so hosts auto-follow the newest gated point release. Pass a release explicitly to
+override the detection: `./build-push.sh 10.2`.
 
 `build-push.sh` pushes into the **Library** environment and (with `SMOKE_PULL=1`,
 the default) re-pulls the image and re-checks it. Library is private staging; the
@@ -116,10 +123,12 @@ Production** (via the `theforeman.foreman` collection). Ansible aborts the run o
 the first failed task, so a failed smoke test stops everything *before* promotion
 and Production keeps its prior good version. Production is what hosts install from.
 
-Each run publishes **two tags per image**: the pinned tag (`10.0`, `1.35.5` —
-overwritten weekly so hosts tracking the pin get the refresh) and a dated tag
-(`10.0-20260607`, `1.35.5-20260607` — an immutable weekly snapshot for rollback).
-The scripts honor `EXTRA_TAGS="<tag> [tag...]"` for the extra tags.
+Each run publishes a refreshed pinned tag plus an immutable dated snapshot. For
+the **base image** that is three tags: the floating `:10` (what hosts pin), the
+detected release `:10.2`, and the snapshot `:10.2-20260607`. For the **k8s
+images** it is the two tags `:1.35.5` and `:1.35.5-20260607` (the tag is the
+Kubernetes version — see below). `build-push.sh` honors `DATE_STAMP` for the
+dated snapshot; both scripts honor `EXTRA_TAGS="<tag> [tag...]"` for ad-hoc tags.
 
 ```
 main.yml                target nexus, sudo -> bootcbuild, git pull, login,
@@ -166,14 +175,18 @@ runs on Foreman: `sudo foreman-rake console < foreman/<script>.rb`):
 2. **Create the CV** — `foreman/setup_content_view.rb`: creates the `bootc` CV,
    adds the four push repos, publishes a version, and promotes it to Production.
    It prints the promoted pull paths.
-3. **Production pull + repoint refs** — run `set_unauth_pull.rb` with
-   `KEEP_LIBRARY_PULL=1` (enables Production, leaves Library pullable for now),
-   then re-run `setup_image_mode_hostgroup.rb` and `setup_kubernetes_image_mode.rb`
-   (they resolve the Production path from Katello and update the host-group
-   `ostreecontainer` params). **Provision one test bootc host** and confirm `%pre`
-   pulls from the Production path.
-4. **Lock down Library** — only after that succeeds, run
-   `foreman/set_unauth_pull.rb` (no env var) to set Library `unauth_pull=false`.
+3. **Enable Production pull** — `foreman/set_unauth_pull.rb`: enables anonymous
+   pull on Production. It leaves Library pullable for now (it only locks Library
+   down once the host-group refs point at Production — see step 5), so in-flight
+   provisions don't break.
+4. **Repoint refs** — `setup_image_mode_hostgroup.rb` and
+   `setup_kubernetes_image_mode.rb` resolve the Production path from Katello and
+   update the host-group `ostreecontainer` params. **Provision one test bootc
+   host** and confirm `%pre` pulls anonymously from the Production path.
+5. **Lock down Library** — re-run `foreman/set_unauth_pull.rb`. Now that the refs
+   point at Production it sets Library `unauth_pull=false`. (The script is
+   self-sequencing on the Image Mode host group's `ostreecontainer` value, so the
+   order is enforced — no env flags, which `foreman-rake` would strip anyway.)
 
 From then on the weekly Ascender build keeps Production current behind the smoke
 gate.

@@ -4,10 +4,19 @@
 # Katello internal registry on foreman.garaventaville.com.
 #
 # Usage:
-#   ./build-push.sh [TAG]
-#   TAG defaults to "10.0". Override REGISTRY/ORG/ENV/IMAGE via env vars.
-#   EXTRA_TAGS (space-separated) publishes the same image under additional tags
-#   (e.g. a dated tag for the weekly Ascender build: EXTRA_TAGS="10.0-20260607").
+#   ./build-push.sh [RELEASE]
+#   RELEASE is the AlmaLinux point release used as the image tag (e.g. "10.2").
+#   If omitted it is auto-detected from the built image's /etc/os-release
+#   VERSION_ID, so the tag FOLLOWS the upstream release without manual edits.
+#
+# Each run publishes three tags so hosts auto-follow point releases while
+# snapshots stay pinnable:
+#   :<major>            floating (e.g. :10) — what the Image Mode host group pins;
+#                       always the latest gated release
+#   :<release>          e.g. :10.2 — the point release, refreshed in place
+#   :<release>-<date>   immutable weekly snapshot, when DATE_STAMP is set
+# plus anything in EXTRA_TAGS (space-separated) for ad-hoc tags.
+# Override REGISTRY/ORG/PRODUCT/IMAGE via env vars.
 #
 # Login first (interactive, once per session / until token expires):
 #   podman login "$REGISTRY"
@@ -21,11 +30,11 @@ REGISTRY="${REGISTRY:-foreman.garaventaville.com}"
 ORG="${ORG:-garaventaville}"     # org label "Garaventaville", lowercased
 PRODUCT="${PRODUCT:-bootc}"      # Katello product created for bootc images
 IMAGE="${IMAGE:-almalinux10-bootc}"
-TAG="${1:-${TAG:-10.0}}"
 CONTEXT="${CONTEXT:-$(dirname "$0")}"
 
-LOCAL_REF="${IMAGE}:${TAG}"
-REMOTE_REF="${REGISTRY}/${ORG}/${PRODUCT}/${IMAGE}:${TAG}"
+# Build to a working local tag — the release tag isn't known until the image
+# exists (we read it from the built image below).
+LOCAL_REF="${IMAGE}:build"
 
 echo ">> Building ${LOCAL_REF} from ${CONTEXT}/Containerfile"
 podman build --pull=always -t "${LOCAL_REF}" -f "${CONTEXT}/Containerfile" "${CONTEXT}"
@@ -36,17 +45,31 @@ podman run --rm "${LOCAL_REF}" bootc --version
 podman run --rm "${LOCAL_REF}" rpm -q qemu-guest-agent >/dev/null \
   && echo "   baked packages present: OK"
 
+# --- Resolve the release tag (arg overrides; else detect from the image) ---
+RELEASE="${1:-${RELEASE:-}}"
+if [ -z "${RELEASE}" ]; then
+  RELEASE="$(podman run --rm "${LOCAL_REF}" sh -c '. /etc/os-release && printf "%s" "$VERSION_ID"')"
+fi
+if [ -z "${RELEASE}" ]; then
+  echo "!! Could not determine AlmaLinux release (VERSION_ID) from the image." >&2
+  exit 1
+fi
+MAJOR="${RELEASE%%.*}"   # 10.2 -> 10 (the floating tag hosts track)
+echo ">> Release ${RELEASE} (floating major tag :${MAJOR})"
+
+# Tag set: floating major, the release, an optional dated snapshot, plus EXTRA_TAGS.
+# shellcheck disable=SC2206
+TAGS=("${MAJOR}" "${RELEASE}")
+[ -n "${DATE_STAMP:-}" ] && TAGS+=("${RELEASE}-${DATE_STAMP}")
+TAGS+=(${EXTRA_TAGS:-})
+
 # --- Confirm logged in, then push ------------------------------------------
 if ! podman login --get-login "${REGISTRY}" >/dev/null 2>&1; then
   echo "!! Not logged in to ${REGISTRY}. Run:  podman login ${REGISTRY}" >&2
   exit 1
 fi
 
-# Publish under the pinned TAG plus any EXTRA_TAGS (e.g. a weekly dated tag).
-# shellcheck disable=SC2206
-EXTRA=(${EXTRA_TAGS:-})
-ALL_TAGS=("${TAG}" "${EXTRA[@]}")
-for t in "${ALL_TAGS[@]}"; do
+for t in "${TAGS[@]}"; do
   remote="${REGISTRY}/${ORG}/${PRODUCT}/${IMAGE}:${t}"
   echo ">> Tagging  ${LOCAL_REF} -> ${remote}"
   podman tag "${LOCAL_REF}" "${remote}"
@@ -60,17 +83,18 @@ done
 # build. This is what gates promotion to Production in the weekly run; a non-zero
 # exit here stops the playbook before anything is promoted. Opt out of the extra
 # pull on a manual run with SMOKE_PULL=0.
+RELEASE_REF="${REGISTRY}/${ORG}/${PRODUCT}/${IMAGE}:${RELEASE}"
 if [ "${SMOKE_PULL:-1}" != "0" ]; then
-  echo ">> Pull-back smoke test: re-pulling ${REMOTE_REF} from the registry"
-  podman rmi -f "${REMOTE_REF}" >/dev/null 2>&1 || true
-  podman pull "${REMOTE_REF}"
-  podman run --rm "${REMOTE_REF}" bootc --version
-  podman run --rm "${REMOTE_REF}" rpm -q qemu-guest-agent >/dev/null \
+  echo ">> Pull-back smoke test: re-pulling ${RELEASE_REF} from the registry"
+  podman rmi -f "${RELEASE_REF}" >/dev/null 2>&1 || true
+  podman pull "${RELEASE_REF}"
+  podman run --rm "${RELEASE_REF}" bootc --version
+  podman run --rm "${RELEASE_REF}" rpm -q qemu-guest-agent >/dev/null \
     && echo "   pulled image OK: baked packages present"
 fi
 
 echo ">> Done. Image available at:"
-for t in "${ALL_TAGS[@]}"; do
+for t in "${TAGS[@]}"; do
   echo "     ${REGISTRY}/${ORG}/${PRODUCT}/${IMAGE}:${t}"
 done
-echo "   Set the pinned ref as the host parameter 'ostreecontainer'."
+echo "   The Image Mode host group pins :${MAJOR}; :${RELEASE} is the release, dated tags are snapshots."

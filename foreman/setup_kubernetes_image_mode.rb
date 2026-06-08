@@ -24,8 +24,8 @@ TAG = ENV.fetch('K8S_TAG', '1.35.5')
 cv   = Katello::ContentView.find_by!(organization_id: org.id, label: 'bootc')
 prod = Katello::KTEnvironment.find_by!(organization_id: org.id, label: 'Production')
 prod_path = lambda do |image|
-  r = Katello::Repository.in_environment(prod).in_content_views([cv])
-                         .detect { |repo| repo.root&.name == image }
+  # single line: foreman-rake console evaluates piped stdin line-by-line
+  r = Katello::Repository.in_environment(prod).in_content_views([cv]).detect { |repo| repo.root&.name == image }
   raise "#{image} not promoted to Production yet — run setup_content_view.rb" if r.nil?
   "foreman.garaventaville.com/#{r.container_repository_name}:#{TAG}"
 end

@@ -47,10 +47,18 @@ missing = IMAGES - library_repos.map { |r| r.root&.name }
 puts "MISSING_REPOS\t#{missing.join(', ')} (push them first)" unless missing.empty?
 
 # 3. Publish a version (snapshots current Library push content) via dynflow.
-puts "PUBLISHING…"
-ForemanTasks.sync_task(::Actions::Katello::ContentView::Publish, cv, 'initial gated publish')
+# Idempotent: only publish if the CV has no version yet (the weekly main.yml run
+# is what publishes fresh versions thereafter). NB order by the real major/minor
+# columns — there is no `version` column.
 cv.reload
-version = cv.versions.order(:version).last
+if cv.versions.empty?
+  puts "PUBLISHING…"
+  ForemanTasks.sync_task(::Actions::Katello::ContentView::Publish, cv, 'initial gated publish')
+  cv.reload
+else
+  puts "ALREADY_PUBLISHED\tversions=#{cv.versions.count}"
+end
+version = cv.versions.order(:major, :minor).last
 puts "PUBLISHED\tversion=#{version.version}\tid=#{version.id}"
 
 # 4. Promote that version to Production to establish the install-time path.

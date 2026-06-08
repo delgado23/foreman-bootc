@@ -25,7 +25,8 @@
     repo_url: https://git.garaventaville.com/Garaventaville/foreman-bootc.git
     repo_version: main
     registry: foreman.garaventaville.com
-    base_tag: "10.0"      # almalinux10-bootc — matches build-push.sh default
+    # almalinux10-bootc has no fixed tag — build-push.sh detects the AlmaLinux
+    # release (e.g. 10.2) from the image and also pushes the floating :10 tag.
     k8s_tag: "1.35.5"     # kubernetes-* — matches K8S_VERSION / build-push-k8s.sh
   tasks:
     - name: Resolve the rootless build user (UID + home, for runtime dir / repo path)
@@ -60,12 +61,12 @@
           no_log: true
           changed_when: true
 
-        - name: Build, smoke-test, and push the base image (pinned + dated tags)
+        - name: Build, smoke-test, and push the base image (release + floating + dated tags)
           ansible.builtin.command:
-            cmd: "./build-push.sh {{ base_tag }}"
+            cmd: "./build-push.sh"   # auto-detects the AlmaLinux release as the tag
             chdir: "{{ repo_dest }}"
           environment:
-            EXTRA_TAGS: "{{ base_tag }}-{{ date_stamp }}"
+            DATE_STAMP: "{{ date_stamp }}"   # publishes the :<release>-<date> snapshot
             SMOKE_PULL: "1"   # re-pull from the registry and re-check (promotion gate)
           changed_when: true
 
