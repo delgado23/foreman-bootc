@@ -30,6 +30,7 @@ import json
 import os
 import ssl
 import sys
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -97,6 +98,24 @@ class Api:
             sys.exit(f"ERROR: required {endpoint[:-1]} '{name}' not found in Ascender.")
         return obj
 
+    def sync_project(self, project_id: int, timeout: int = 300) -> None:
+        """Trigger a project update and block until it finishes (the playbook
+        list isn't valid until the SCM sync completes)."""
+        update = self.post(f"/projects/{project_id}/update/", {})
+        upd_id = update.get("id")
+        print(f"  syncing project (update {upd_id})...", end="", flush=True)
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            status = self.get(f"/project_updates/{upd_id}/").get("status")
+            if status in ("successful",):
+                print(" ok")
+                return
+            if status in ("failed", "error", "canceled"):
+                sys.exit(f"\nERROR: project sync ended '{status}'.")
+            print(".", end="", flush=True)
+            time.sleep(3)
+        sys.exit(f"\nERROR: project sync did not finish within {timeout}s.")
+
 
 def ensure(api: Api, endpoint: str, name: str, desired: dict) -> dict:
     """Find-or-create an object by name, PATCHing it to match `desired`."""
@@ -127,6 +146,8 @@ def main() -> None:
     ap.add_argument("--base", default=os.environ.get("ASCENDER_BASE", BASE_DEFAULT))
     ap.add_argument("--vault-credential", default=DEFAULT_VAULT_CRED,
                     help="Vault credential that decrypts vars/vault.yml")
+    ap.add_argument("--scm-branch", default="main",
+                    help="git branch the Ascender project tracks (default: main)")
     ap.add_argument("--weekday", default="SU", choices=WEEKDAYS)
     ap.add_argument("--hour", type=int, default=3)
     ap.add_argument("--minute", type=int, default=0)
@@ -165,7 +186,7 @@ def main() -> None:
     print("Plan:")
     print(f"  org={org['id']} inventory={inventory['id']} machine_cred={machine_cred['id']} "
           f"vault_cred={vault_cred['id']} ee={ee['id']} scm_cred={scm_cred['id']}")
-    print(f"  project '{PROJECT_NAME}' <- {PROJECT_SCM_URL} (branch main)")
+    print(f"  project '{PROJECT_NAME}' <- {PROJECT_SCM_URL} (branch {args.scm_branch})")
     print(f"  job template '{JT_NAME}' -> {PLAYBOOK} limit={LIMIT}")
     print(f"  schedule '{SCHEDULE_NAME}': {rrule}")
     if args.dry_run:
@@ -179,14 +200,15 @@ def main() -> None:
         "organization": org["id"],
         "scm_type": "git",
         "scm_url": PROJECT_SCM_URL,
-        "scm_branch": "main",
+        "scm_branch": args.scm_branch,
         "credential": scm_cred["id"],
         "scm_update_on_launch": True,
         "scm_clean": True,
         "scm_delete_on_update": False,
     })
-    api.post(f"/projects/{project['id']}/update/", {})  # trigger an initial sync
-    print("  triggered project sync")
+    # Block until the SCM sync completes — the JT's playbook field is validated
+    # against the synced project, so creating it before the sync finishes 400s.
+    api.sync_project(project["id"])
 
     # 2. Job template.
     print("\nJob template:")
