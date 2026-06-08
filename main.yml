@@ -124,6 +124,12 @@
       server_url: "{{ foreman_hostname }}"
       organization: "{{ foreman_org }}"
       validate_certs: false
+    theforeman.foreman.host:
+      username: "{{ foreman_username }}"
+      password: "{{ foreman_password }}"
+      server_url: "{{ foreman_hostname }}"
+      organization: "{{ foreman_org }}"
+      validate_certs: false
   tasks:
     - name: Publish bootc content view and promote Library -> Production
       theforeman.foreman.content_view_version:
@@ -164,5 +170,30 @@
       loop: "{{ (bootc_cvv_info.resources | sort(attribute='id') | reverse)[bootc_cv_keep | int:] | selectattr('environments', 'equalto', []) | list }}"
       loop_control:
         label: "version {{ item.version }} (id {{ item.id }})"
+      delegate_to: localhost
+      run_once: true
+
+    # Build-orphan cleanup: each image build runs `subscription-manager register`
+    # inside the buildah container, which creates a Katello content host named after
+    # the container's short ID (12 hex chars). The in-build `unregister` drops the
+    # subscription but Katello keeps the host record, so every run leaves orphans
+    # (base + kubernetes-common/controlplane/worker). Find the unmanaged hosts whose
+    # name is exactly a 12-char container ID and delete them. The strict name regex
+    # is what scopes this — real fleet hosts have FQDNs, never bare container IDs.
+    - name: Find orphaned build hosts (unmanaged, container-ID names)
+      theforeman.foreman.resource_info:
+        resource: hosts
+        search: 'managed = false'
+      register: unmanaged_hosts_info
+      delegate_to: localhost
+      run_once: true
+
+    - name: Delete orphaned build hosts
+      theforeman.foreman.host:
+        name: "{{ item }}"
+        state: absent
+      loop: "{{ unmanaged_hosts_info.resources | map(attribute='name') | select('match', '^[0-9a-f]{12}$') | list }}"
+      loop_control:
+        label: "{{ item }}"
       delegate_to: localhost
       run_once: true
