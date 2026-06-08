@@ -90,9 +90,15 @@
 # everything here BEFORE anything is promoted (Production keeps its prior good
 # version). Publishing snapshots the freshly-pushed Library content into a new CV
 # version; promoting it to Production is the gate that makes it installable.
+#
+# Targets nexus (NOT localhost): the job template runs with a --limit on the build
+# host, and --limit filters every play — a `hosts: localhost` play matches nothing
+# under it and silently skips. nexus is in the limit, and if the build play above
+# failed nexus is marked failed so this play finds no host (the gate still holds).
+# The Foreman API call itself is delegated to localhost (the execution environment,
+# where the theforeman.foreman collection and network to Foreman live).
 - name: Promote the smoke-tested bootc images to Production
-  hosts: localhost
-  connection: local
+  hosts: nexus.garaventaville.com
   gather_facts: false
   vars_files:
     - vars/vault.yml
@@ -110,3 +116,5 @@
         lifecycle_environments:
           - Library
           - Production
+      delegate_to: localhost
+      run_once: true
