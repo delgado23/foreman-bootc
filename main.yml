@@ -100,25 +100,69 @@
 - name: Promote the smoke-tested bootc images to Production
   hosts: nexus.garaventaville.com
   gather_facts: false
+  # Every task here calls the Foreman API from the execution environment (delegated
+  # to localhost). The job template enables privilege escalation globally so the
+  # build block can sudo to bootcbuild on nexus; none of these tasks need it and the
+  # EE has no sudo — so disable become for the whole play.
+  become: false
   vars_files:
     - vars/vault.yml
   vars:
     foreman_org: Garaventaville
+    bootc_cv: bootc
+    bootc_cv_keep: 3          # number of newest content view versions to retain
+  module_defaults:
+    theforeman.foreman.content_view_version:
+      username: "{{ foreman_username }}"
+      password: "{{ foreman_password }}"
+      server_url: "{{ foreman_hostname }}"
+      organization: "{{ foreman_org }}"
+      validate_certs: false
+    theforeman.foreman.resource_info:
+      username: "{{ foreman_username }}"
+      password: "{{ foreman_password }}"
+      server_url: "{{ foreman_hostname }}"
+      organization: "{{ foreman_org }}"
+      validate_certs: false
   tasks:
     - name: Publish bootc content view and promote Library -> Production
       theforeman.foreman.content_view_version:
-        username: "{{ foreman_username }}"
-        password: "{{ foreman_password }}"
-        server_url: "{{ foreman_hostname }}"
-        organization: "{{ foreman_org }}"
-        validate_certs: false
-        content_view: bootc
+        content_view: "{{ bootc_cv }}"
         lifecycle_environments:
           - Library
           - Production
       delegate_to: localhost
       run_once: true
-      # The job template enables privilege escalation globally (the build block
-      # needs it to sudo to bootcbuild on nexus). This task just calls the Foreman
-      # API from the execution environment, which has no sudo — turn become off.
-      become: false
+
+    # Retention: each publish creates a new CV version, and promoting the newest to
+    # both environments orphans the previous one. Keep only the newest
+    # `bootc_cv_keep` versions and delete the rest (oldest first) — but only versions
+    # that are in NO lifecycle environment, so a version still serving Library or
+    # Production is never removed.
+    - name: Look up the bootc content view
+      theforeman.foreman.resource_info:
+        resource: content_views
+        search: 'name = "{{ bootc_cv }}"'
+      register: bootc_cv_info
+      delegate_to: localhost
+      run_once: true
+
+    - name: List the bootc content view versions
+      theforeman.foreman.resource_info:
+        resource: content_view_versions
+        params:
+          content_view_id: "{{ bootc_cv_info.resources[0].id }}"
+      register: bootc_cvv_info
+      delegate_to: localhost
+      run_once: true
+
+    - name: Delete bootc content view versions beyond the newest {{ bootc_cv_keep }}
+      theforeman.foreman.content_view_version:
+        content_view: "{{ bootc_cv }}"
+        version: "{{ item.version }}"
+        state: absent
+      loop: "{{ (bootc_cvv_info.resources | sort(attribute='id') | reverse)[bootc_cv_keep | int:] | selectattr('environments', 'equalto', []) | list }}"
+      loop_control:
+        label: "version {{ item.version }} (id {{ item.id }})"
+      delegate_to: localhost
+      run_once: true
