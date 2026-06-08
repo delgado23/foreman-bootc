@@ -1,0 +1,83 @@
+---
+# main.yml — Weekly build, smoke-test, and push of the AlmaLinux 10 bootc images.
+#
+# Run by Ascender (job template "Build bootc Images Weekly") on a weekly schedule.
+# It builds on the rootless `bootcbuild` user on nexus.garaventaville.com — the same
+# host/user used for manual builds — by reusing the repo's build-push scripts (which
+# build, smoke-test, and push). Each run rebuilds the pinned tags (to pick up upstream
+# security/package updates under the version pin) AND publishes a dated tag so every
+# weekly build is retained for rollback.
+#
+# Requires:
+#   - vars/vault.yml  (Ansible Vault) providing registry_username / registry_password.
+#     Encrypt with the vault password of the Ascender Vault credential attached to the
+#     job template:  ansible-vault encrypt vars/vault.yml
+#   - The connecting machine credential (e.g. "Ansible User") must be able to sudo to
+#     `bootcbuild` on nexus, and `bootcbuild` must have lingering enabled so rootless
+#     podman has a runtime dir:  loginctl enable-linger bootcbuild
+- name: Weekly build, test, and push of the AlmaLinux 10 bootc images
+  hosts: nexus.garaventaville.com
+  gather_facts: true
+  vars_files:
+    - vars/vault.yml
+  vars:
+    bootc_build_user: bootcbuild
+    repo_url: https://git.garaventaville.com/Garaventaville/foreman-bootc.git
+    repo_version: main
+    registry: foreman.garaventaville.com
+    base_tag: "10.0"      # almalinux10-bootc — matches build-push.sh default
+    k8s_tag: "1.35.5"     # kubernetes-* — matches K8S_VERSION / build-push-k8s.sh
+  tasks:
+    - name: Resolve the rootless build user (UID + home, for runtime dir / repo path)
+      ansible.builtin.getent:
+        database: passwd
+        key: "{{ bootc_build_user }}"
+
+    - name: Set build facts (runtime dir, weekly date tag, repo checkout path)
+      ansible.builtin.set_fact:
+        # Dedicated CI checkout — kept separate from the human's manual ~/build dir.
+        bootc_runtime_dir: "/run/user/{{ ansible_facts.getent_passwd[bootc_build_user][1] }}"
+        date_stamp: "{{ ansible_facts.date_time.date | regex_replace('-', '') }}"
+        repo_dest: "{{ ansible_facts.getent_passwd[bootc_build_user][4] }}/foreman-bootc"
+
+    - name: Build, test, and push as the rootless build user
+      become: true
+      become_user: "{{ bootc_build_user }}"
+      environment:
+        XDG_RUNTIME_DIR: "{{ bootc_runtime_dir }}"
+      block:
+        - name: Check out / update the build repo
+          ansible.builtin.git:
+            repo: "{{ repo_url }}"
+            dest: "{{ repo_dest }}"
+            version: "{{ repo_version }}"
+            force: true
+
+        - name: Log in to the Katello registry (rootless podman)
+          ansible.builtin.command:
+            cmd: "podman login --username {{ registry_username }} --password-stdin {{ registry }}"
+            stdin: "{{ registry_password }}"
+          no_log: true
+          changed_when: true
+
+        - name: Build, smoke-test, and push the base image (pinned + dated tags)
+          ansible.builtin.command:
+            cmd: "./build-push.sh {{ base_tag }}"
+            chdir: "{{ repo_dest }}"
+          environment:
+            EXTRA_TAGS: "{{ base_tag }}-{{ date_stamp }}"
+          changed_when: true
+
+        - name: Build, smoke-test, and push the Kubernetes images (pinned + dated tags)
+          ansible.builtin.command:
+            cmd: "./build-push-k8s.sh {{ k8s_tag }}"
+            chdir: "{{ repo_dest }}"
+          environment:
+            EXTRA_TAGS: "{{ k8s_tag }}-{{ date_stamp }}"
+          changed_when: true
+      always:
+        - name: Log out of the Katello registry
+          ansible.builtin.command:
+            cmd: "podman logout {{ registry }}"
+          changed_when: true
+          failed_when: false

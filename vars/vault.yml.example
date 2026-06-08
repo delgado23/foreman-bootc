@@ -1,0 +1,16 @@
+---
+# vars/vault.yml — registry credentials for the automated podman push.
+#
+# Copy to vars/vault.yml, fill in the Katello registry user/password, then encrypt:
+#
+#   cp vars/vault.yml.example vars/vault.yml
+#   $EDITOR vars/vault.yml
+#   ansible-vault encrypt vars/vault.yml
+#
+# Use the SAME vault password as the Ascender Vault credential attached to the
+# "Build bootc Images Weekly" job template (the setup script defaults to the
+# "linux provisiong" Vault credential). The encrypted vars/vault.yml is safe to
+# commit; the plaintext copy is not (it matches .gitignore's *secret* guard only
+# loosely — keep it out of git).
+registry_username: <katello-registry-username>
+registry_password: <katello-registry-password>
