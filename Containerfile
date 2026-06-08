@@ -8,9 +8,13 @@ LABEL org.opencontainers.image.title="almalinux10-bootc" \
       org.opencontainers.image.vendor="garaventaville"
 
 # --- Packages from Katello (governed/synced repos, not public mirrors) ------
-# Register to Katello with an activation key, install everything from the synced
-# repos with public mirrors disabled, then unregister so the image carries no
-# consumer identity. The only public fetch is subscription-manager itself, which
+# Register to Katello with an activation key, apply the latest OS errata
+# (dnf upgrade) and install everything from the synced repos with public mirrors
+# disabled, then unregister so the image carries no consumer identity. The
+# upgrade brings the base image's pre-installed packages up to the level of the
+# Katello-synced repos, so OS freshness no longer depends solely on how current
+# the upstream almalinux-bootc:10 base happens to be. The only public fetch is
+# subscription-manager itself, which
 # must exist before we can reach Katello (the unavoidable bootstrap). The org +
 # activation key supply the repo set (BaseOS/AppStream/CRB/EPEL/Duo/Foreman
 # client/...). A failed build may leave an orphaned Katello consumer to clean up.
@@ -28,6 +32,7 @@ LABEL org.opencontainers.image.title="almalinux10-bootc" \
 RUN dnf -y install subscription-manager \
  && rpm -Uvh --replacepkgs http://foreman.garaventaville.com/pub/katello-ca-consumer-latest.noarch.rpm \
  && subscription-manager register --org Garaventaville --activationkey 'AlmaLinux 10' \
+ && dnf -y --disablerepo='*' --enablerepo='Garaventaville_AlmaLinux_10_*' upgrade \
  && dnf -y --disablerepo='*' --enablerepo='Garaventaville_AlmaLinux_10_*' install \
         qemu-guest-agent \
         cloud-init \
