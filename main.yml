@@ -35,9 +35,10 @@
 
     - name: Set build facts (runtime dir, weekly date tag, repo checkout path)
       ansible.builtin.set_fact:
-        bootc_runtime_dir: "/run/user/{{ getent_passwd[bootc_build_user][1] }}"
-        date_stamp: "{{ ansible_date_time.date | regex_replace('-', '') }}"
-        repo_dest: "{{ getent_passwd[bootc_build_user][4] }}/build"
+        # Dedicated CI checkout — kept separate from the human's manual ~/build dir.
+        bootc_runtime_dir: "/run/user/{{ ansible_facts.getent_passwd[bootc_build_user][1] }}"
+        date_stamp: "{{ ansible_facts.date_time.date | regex_replace('-', '') }}"
+        repo_dest: "{{ ansible_facts.getent_passwd[bootc_build_user][4] }}/foreman-bootc"
 
     - name: Build, test, and push as the rootless build user
       become: true
