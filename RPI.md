@@ -76,9 +76,14 @@ changes.
    `AlmaLinux 10 aarch64` (id 11). `Containerfile.rpi`'s full package set is
    satisfiable from that CV (duo_unix from EPEL; katello-host-tools noarch from the
    Foreman Client repo). Reference: `RPI-KATELLO.md`. Nothing to build here.
-2. **Build host (now the biggest).** aarch64 + privileged podman + loop devices.
-   Decide: emulate on
-   nexus vs a native arm64 builder. (Deferred earlier.)
+2. ~~**Build host.**~~ **DECIDED 2026-06-09: `cthun.garaventaville.com`** — a
+   native aarch64 host (AlmaLinux 10.2 on a Raspberry Pi 4: 4 cores, 3.7 GiB RAM,
+   SD-card root, 115 G free, passwordless sudo via the `ansible` user). Native, so
+   no qemu emulation; rootful podman (sudo) covers the flashable image's privileged
+   loop-mount + `rpi-bootc-bootloader sync`. One host does both the container and
+   the flashable `.raw`. Setup needed: `dnf install podman`. Watch: 3.7 GiB RAM is
+   tight for `bootc-image-builder` (add swap / expect OOM risk on the flashable
+   step); SD-card write endurance on a regular builder. (nexus stays x86-only.)
 3. **First-boot/registration model.** The x86 lane registers via kickstart
    `%post` + activation key. On the Pi that has to move into NoCloud `user-data`
    (the CIDATA partition) baked at flash time. Decide what goes in `user-data`
