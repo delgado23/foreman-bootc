@@ -1,0 +1,113 @@
+# AlmaLinux 10 image-mode (bootc) base for Raspberry Pi (aarch64).
+#
+# This is the Pi sibling of ./Containerfile. It derives FROM AlmaLinux's
+# experimental Raspberry Pi bootc base, which already bakes in the Pi firmware,
+# a Pi-specific kernel (rebased on Raspberry Pi OS sources), device-tree
+# management and the rpi-bootc-bootloader sync tool. Because of that, there is
+# NO firmware/UEFI decision to make here — the Pi boots natively.
+#
+#   Base:  quay.io/almalinuxorg/almalinux-bootc-rpi:10   (arm64 ONLY)
+#   Tested by AlmaLinux on: Pi 5 (2/8/16G), Pi 4, Pi 3, Pi Zero 2 W.
+#   Upstream: https://github.com/AlmaLinux/bootc-images-rpi  (marked EXPERIMENTAL)
+#
+# MUST build for arm64:  podman build --platform linux/arm64 -f Containerfile.rpi .
+# On the x86 builder this means qemu emulation (slow); a native aarch64 host is
+# better. Build-host decision is still open.
+#
+# ============================ NOT YET BUILDABLE ============================
+# The Katello RUN block below is BLOCKED until aarch64 content exists in
+# Katello. The Garaventaville_AlmaLinux_10_* repos and the 'AlmaLinux 10'
+# activation key are x86_64-only today. See RPI-KATELLO.md for the exact
+# product/repo/key setup that unblocks this (it creates the
+# 'AlmaLinux 10 aarch64' key and the Garaventaville_aarch64_AlmaLinux_10_* repos
+# referenced below). To smoke-test JUST the derive + flashable image path before
+# that's ready, comment out the Katello RUN block (everything between the two
+# "Katello" markers) and the bootc-rhsm-facts timer enable.
+# ==========================================================================
+FROM quay.io/almalinuxorg/almalinux-bootc-rpi:10
+
+# --- Metadata --------------------------------------------------------------
+LABEL org.opencontainers.image.title="almalinux10-bootc-rpi" \
+      org.opencontainers.image.description="AlmaLinux 10 image-mode base for Garaventaville Raspberry Pi fleet" \
+      org.opencontainers.image.vendor="garaventaville"
+
+# --- Packages from Katello (aarch64) --------------------------- KATELLO ---
+# Mirrors ./Containerfile, with three Pi differences:
+#   * registers to an aarch64 activation key (TBD — needs aarch64 repos synced)
+#   * drops qemu-guest-agent (no hypervisor on bare-metal Pi)
+#   * adds cloud-init + cloud-utils-growpart so first boot grows the root fs and
+#     applies NoCloud user-data from the CIDATA partition (this replaces
+#     AlmaLinux's separate "bootstrap-image" layer — we bake it in directly).
+# The aarch64 repos use an arch-led content-label prefix
+# (Garaventaville_aarch64_AlmaLinux_10_*) so this glob can NEVER match the x86
+# product's Garaventaville_AlmaLinux_10_* repos, and vice-versa — see
+# RPI-KATELLO.md for why the product label leads with the arch.
+RUN dnf -y install subscription-manager \
+ && rpm -Uvh --replacepkgs http://foreman.garaventaville.com/pub/katello-ca-consumer-latest.noarch.rpm \
+ && subscription-manager register --org Garaventaville --activationkey 'AlmaLinux 10 aarch64' \
+ && dnf -y --disablerepo='*' --enablerepo='Garaventaville_aarch64_AlmaLinux_10_*' upgrade \
+ && dnf -y --disablerepo='*' --enablerepo='Garaventaville_aarch64_AlmaLinux_10_*' install \
+        cloud-init \
+        cloud-utils-growpart \
+        ipa-client \
+        autofs \
+        rsync \
+        shadow-utils \
+        zsh \
+        perl \
+        git \
+        git-credential-oauth \
+        vim-enhanced \
+        tmux \
+        bash-completion \
+        yum-utils \
+        htop \
+        btop \
+        atop \
+        nmon \
+        ocl-icd \
+        duo_unix \
+        katello-host-tools \
+        katello-host-tools-tracer \
+ && { subscription-manager unregister || true; } \
+ && { subscription-manager clean || true; } \
+ && rm -f /etc/yum.repos.d/almalinux*.repo \
+ && dnf clean all \
+ && rm -rf /var/cache/dnf /var/lib/dnf/history.sqlite* /var/log/dnf* /var/log/hawkey.log
+# ------------------------------------------------------------- /KATELLO ---
+
+# cloud-init resizes /var (not /), matching how AlmaLinux's rpi bootstrap layer
+# repoints growpart at the ostree /var. See image/rpi/10-bootc-growpart.cfg.
+COPY image/rpi/10-bootc-growpart.cfg /etc/cloud/cloud.cfg.d/
+
+# --- Services --------------------------------------------------------------
+# No qemu-guest-agent on a Pi. cloud-init is enabled by its RPM presets.
+RUN systemctl enable sshd
+
+# kdump is useless on a Pi (and can't rebuild its initramfs on a read-only
+# ostree root); mask it as we do on the x86 image.
+RUN systemctl mask kdump.service
+
+# --- Management SSH (root) keys: Foreman rex + Ascender/AWX -----------------
+# Arch-independent; reused verbatim from the x86 image. Baked into /usr so they
+# survive the bootc first-boot /var init.
+COPY image/foreman-rex.root.keys /usr/share/foreman-rex/root.keys
+COPY image/sshd-foreman-rex.conf /etc/ssh/sshd_config.d/10-foreman-rex.conf
+
+# --- bootc -> Katello image-mode facts -------------------------------------
+# Reused verbatim. Requires subscription-manager (installed in the Katello block
+# above); if that block is commented out for a derive-only smoke test, also
+# drop the timer enable below.
+COPY image/bootc-rhsm-facts /usr/libexec/bootc-rhsm-facts
+COPY image/bootc-rhsm-facts.service /usr/lib/systemd/system/bootc-rhsm-facts.service
+COPY image/bootc-rhsm-facts.timer /usr/lib/systemd/system/bootc-rhsm-facts.timer
+RUN chmod 0644 /usr/share/foreman-rex/root.keys /etc/ssh/sshd_config.d/10-foreman-rex.conf \
+ && chmod 0755 /usr/libexec/bootc-rhsm-facts \
+ && systemctl enable bootc-rhsm-facts.timer
+
+RUN rm -rf /tmp/* /var/tmp/*
+
+# Validate the image is a well-formed bootc target.
+RUN bootc container lint
+
+# No CMD/ENTRYPOINT — bootc boots the OS.
