@@ -1,13 +1,23 @@
 #!/usr/bin/env bash
 #
-# build-push.sh — build the AlmaLinux 10 bootc image and push it into the
-# Katello internal registry on foreman.garaventaville.com.
+# build-push.sh — build an AlmaLinux bootc image and push it into the Katello
+# internal registry on foreman.garaventaville.com.
 #
 # Usage:
 #   ./build-push.sh [RELEASE]
 #   RELEASE is the AlmaLinux point release used as the image tag (e.g. "10.2").
 #   If omitted it is auto-detected from the built image's /etc/os-release
 #   VERSION_ID, so the tag FOLLOWS the upstream release without manual edits.
+#
+# Which image to build is set by env vars (so one script serves every variant):
+#   CONTAINERFILE  Containerfile to build      (default: <CONTEXT>/Containerfile)
+#   IMAGE          pushed image name           (default: almalinux10-bootc)
+#   SMOKE_PKG      package whose presence the smoke test asserts is baked in
+#                  (default: qemu-guest-agent — pick one the image actually installs)
+#   PLATFORM       podman --platform value     (default: unset = host arch)
+# e.g. the Raspberry Pi (aarch64) image, built natively on an arm64 host:
+#   CONTAINERFILE=Containerfile.rpi IMAGE=almalinux10-bootc-rpi \
+#     SMOKE_PKG=cloud-init ./build-push.sh
 #
 # Each run publishes three tags so hosts auto-follow point releases while
 # snapshots stay pinnable:
@@ -16,7 +26,7 @@
 #   :<release>          e.g. :10.2 — the point release, refreshed in place
 #   :<release>-<date>   immutable weekly snapshot, when DATE_STAMP is set
 # plus anything in EXTRA_TAGS (space-separated) for ad-hoc tags.
-# Override REGISTRY/ORG/PRODUCT/IMAGE via env vars.
+# Override REGISTRY/ORG/PRODUCT via env vars too.
 #
 # Login first (interactive, once per session / until token expires):
 #   podman login "$REGISTRY"
@@ -31,18 +41,21 @@ ORG="${ORG:-garaventaville}"     # org label "Garaventaville", lowercased
 PRODUCT="${PRODUCT:-bootc}"      # Katello product created for bootc images
 IMAGE="${IMAGE:-almalinux10-bootc}"
 CONTEXT="${CONTEXT:-$(dirname "$0")}"
+CONTAINERFILE="${CONTAINERFILE:-${CONTEXT}/Containerfile}"
+SMOKE_PKG="${SMOKE_PKG:-qemu-guest-agent}"
 
 # Build to a working local tag — the release tag isn't known until the image
 # exists (we read it from the built image below).
 LOCAL_REF="${IMAGE}:build"
 
-echo ">> Building ${LOCAL_REF} from ${CONTEXT}/Containerfile"
-podman build --pull=always -t "${LOCAL_REF}" -f "${CONTEXT}/Containerfile" "${CONTEXT}"
+echo ">> Building ${LOCAL_REF} from ${CONTAINERFILE}"
+podman build --pull=always ${PLATFORM:+--platform "${PLATFORM}"} \
+  -t "${LOCAL_REF}" -f "${CONTAINERFILE}" "${CONTEXT}"
 
 # --- Smoke test: the bootc win is testing the OS as a container first ------
-echo ">> Smoke test: bootc status + package presence inside the container"
+echo ">> Smoke test: bootc status + presence of ${SMOKE_PKG} inside the container"
 podman run --rm "${LOCAL_REF}" bootc --version
-podman run --rm "${LOCAL_REF}" rpm -q qemu-guest-agent >/dev/null \
+podman run --rm "${LOCAL_REF}" rpm -q "${SMOKE_PKG}" >/dev/null \
   && echo "   baked packages present: OK"
 
 # --- Resolve the release tag (arg overrides; else detect from the image) ---
@@ -89,7 +102,7 @@ if [ "${SMOKE_PULL:-1}" != "0" ]; then
   podman rmi -f "${RELEASE_REF}" >/dev/null 2>&1 || true
   podman pull "${RELEASE_REF}"
   podman run --rm "${RELEASE_REF}" bootc --version
-  podman run --rm "${RELEASE_REF}" rpm -q qemu-guest-agent >/dev/null \
+  podman run --rm "${RELEASE_REF}" rpm -q "${SMOKE_PKG}" >/dev/null \
     && echo "   pulled image OK: baked packages present"
 fi
 
