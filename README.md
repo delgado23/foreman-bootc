@@ -78,7 +78,7 @@ nodes boot pre-built instead of being assembled at runtime by the
 image-mode via `/run/ostree-booted` and skips the now-baked package installs).
 
 ```
-almalinux10-bootc:10.0
+almalinux10-bootc:10                 (floating major tag; :<release> e.g. 10.2 too)
   └── kubernetes-common:1.35.5        containerd + config, kubelet/kubeadm/kubectl
                                        (PINNED NVR), cri-tools, firewalld, k8s
                                        modules/sysctl, iptables firewall backend
@@ -132,7 +132,8 @@ dated snapshot; both scripts honor `EXTRA_TAGS="<tag> [tag...]"` for ad-hoc tags
 
 ```
 main.yml                target nexus, sudo -> bootcbuild, git pull, login,
-                        ./build-push.sh 10.0  +  ./build-push-k8s.sh 1.35.5
+                        ./build-push.sh  +  ./build-push-k8s.sh 1.35.5
+                        (build-push.sh auto-detects the release tag)
 vars/vault.yml          registry_username / registry_password (ansible-vault)
 ascender/setup_weekly_builds.py   creates the Ascender objects via the API
 ```
@@ -235,12 +236,22 @@ in the image:
 ## Building from Katello content (not public mirrors)
 
 The Containerfile registers to Katello with the **`AlmaLinux 10` activation key**
-(`subscription-manager register --org Garaventaville --activationkey 'AlmaLinux 10'`)
-and installs with `--disablerepo='*' --enablerepo='Garaventaville_AlmaLinux_10_*'`,
-then unregisters — so the image is built from your synced/governed repos
+(`subscription-manager register --org Garaventaville --activationkey 'AlmaLinux 10'`),
+then `dnf upgrade`s and installs with
+`--disablerepo='*' --enablerepo='Garaventaville_AlmaLinux_10_*'`, then unregisters
+— so the image is built from your synced/governed repos
 (BaseOS/AppStream/CRB/EPEL/Duo/Foreman client), not public mirrors. The only
 public fetch is `subscription-manager` itself (needed before Katello is
-reachable). A failed build can leave an orphaned Katello consumer to clean up.
+reachable).
+
+The `dnf upgrade` runs before the install, so the base image's pre-installed
+packages are brought up to the synced-repo errata level on **every** build — OS
+freshness no longer depends solely on how current the upstream
+`almalinux-bootc:10` base is.
+
+A failed build can leave an orphaned Katello consumer (a content host named after
+the build container's short ID); the weekly Ascender run's promote play cleans
+these up automatically after a successful build.
 
 **Caveat — certbot:** `certbot`/`python3-certbot-dns-cloudflare` are temporarily
 dropped. EPEL upstream currently ships a broken `python3-pyOpenSSL 26.2.0` that
