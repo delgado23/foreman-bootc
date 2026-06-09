@@ -32,12 +32,16 @@ LABEL org.opencontainers.image.title="almalinux10-bootc-rpi" \
       org.opencontainers.image.vendor="garaventaville"
 
 # --- Packages from Katello (aarch64) --------------------------- KATELLO ---
-# Mirrors ./Containerfile, with three Pi differences:
-#   * registers to an aarch64 activation key (TBD — needs aarch64 repos synced)
+# Mirrors ./Containerfile, with these Pi differences:
+#   * registers to the aarch64 key 'AlmaLinux 10 aarch64' (created per RPI-KATELLO.md)
 #   * drops qemu-guest-agent (no hypervisor on bare-metal Pi)
 #   * adds cloud-init + cloud-utils-growpart so first boot grows the root fs and
 #     applies NoCloud user-data from the CIDATA partition (this replaces
 #     AlmaLinux's separate "bootstrap-image" layer — we bake it in directly).
+#   * drops duo_unix and katello-host-tools[-tracer]: NO aarch64 builds exist
+#     (Duo ships no aarch64; Foreman client has no el10 aarch64), confirmed
+#     2026-06-09. Consequences (Pi-host MFA; package-profile upload) are tracked
+#     in RPI-KATELLO.md; bootc image-mode facts still come from bootc-rhsm-facts.
 # The aarch64 repos use an arch-led content-label prefix
 # (Garaventaville_aarch64_AlmaLinux_10_*) so this glob can NEVER match the x86
 # product's Garaventaville_AlmaLinux_10_* repos, and vice-versa — see
@@ -66,9 +70,6 @@ RUN dnf -y install subscription-manager \
         atop \
         nmon \
         ocl-icd \
-        duo_unix \
-        katello-host-tools \
-        katello-host-tools-tracer \
  && { subscription-manager unregister || true; } \
  && { subscription-manager clean || true; } \
  && rm -f /etc/yum.repos.d/almalinux*.repo \

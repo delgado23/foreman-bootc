@@ -52,9 +52,12 @@ the **same GPG key**, substituting `aarch64` in the URL.
 
 ## Step 1 — product + repos (hammer)
 
-Create the arch-led product, then a repo per entry the inspector listed. Canonical
-AlmaLinux 10 aarch64 URLs (confirm against the inspector output — your x86 set may
-differ):
+These are the **actual** x86 repos `Containerfile.rpi`'s install list draws from,
+read live from Foreman (`inspect_almalinux_content.rb`, 2026-06-09), with the URL
+switched to aarch64 and the existing content-credential reused by name. The x86
+product has more repos (Docker, Weewx, MySQL, Nvidia, Kubernetes) — those are NOT
+needed for the base Pi image, so they're omitted. `raspberrypi` is aarch64-only
+(no x86 sibling). All x86 repos use download policy `immediate`; mirrored here.
 
 ```bash
 ORG=Garaventaville
@@ -62,39 +65,47 @@ ORG=Garaventaville
 hammer product create --organization "$ORG" \
   --name "AlmaLinux 10 aarch64" --label aarch64_AlmaLinux_10
 
-# repo label MUST match the x86 sibling's label; only the product prefix changes.
-for r in \
-  "BaseOS|https://repo.almalinux.org/almalinux/10/BaseOS/aarch64/os/|RPM-GPG-KEY-AlmaLinux-10" \
-  "AppStream|https://repo.almalinux.org/almalinux/10/AppStream/aarch64/os/|RPM-GPG-KEY-AlmaLinux-10" \
-  "CRB|https://repo.almalinux.org/almalinux/10/CRB/aarch64/os/|RPM-GPG-KEY-AlmaLinux-10" \
-  "raspberrypi|https://repo.almalinux.org/almalinux/10/raspberrypi/aarch64/os/|RPM-GPG-KEY-AlmaLinux-10" \
-  "EPEL|https://dl.fedoraproject.org/pub/epel/10/Everything/aarch64/|RPM-GPG-KEY-EPEL-10" \
-  "Foreman_client|https://yum.theforeman.org/client/<VER>/el10/aarch64/|RPM-GPG-KEY-foreman" \
-; do
-  IFS='|' read -r label url gpg <<<"$r"
+# name|url|content-credential  (empty credential => omit --gpg-key, as on x86)
+REPOS=(
+  "AlmaLinux 10 - BaseOS|https://repo.almalinux.org/almalinux/10/BaseOS/aarch64/os/|"
+  "AlmaLinux 10 - AppStream|https://repo.almalinux.org/almalinux/10/AppStream/aarch64/os/|AlmaLinux 10"
+  "AlmaLinux 10 - CRB|https://repo.almalinux.org/almalinux/10/CRB/aarch64/os/|AlmaLinux 10"
+  "AlmaLinux 10 - raspberrypi|https://repo.almalinux.org/almalinux/10/raspberrypi/aarch64/os/|AlmaLinux 10"
+  "AlmaLinux 10 - EPEL|https://dl.fedoraproject.org/pub/epel/10/Everything/aarch64/|Extra Packages for Enterprise Linux 10"
+)
+# NOT included (no aarch64 builds exist — confirmed 2026-06-09, see below):
+#   Duo            https://pkg.duosecurity.com/RedHat/10/aarch64           -> 404
+#   Foreman Client https://yum.theforeman.org/client/latest/el10/aarch64   -> 404
+for r in "${REPOS[@]}"; do
+  IFS='|' read -r name url gpg <<<"$r"
   hammer repository create --organization "$ORG" \
     --product "AlmaLinux 10 aarch64" \
-    --name "$label" --label "$label" \
-    --content-type yum --url "$url" \
-    --download-policy on_demand \
-    --gpg-key "$gpg"
+    --name "$name" --content-type yum --url "$url" \
+    --download-policy immediate \
+    ${gpg:+--gpg-key "$gpg"}
 done
 ```
 
-Repos to confirm before relying on them (these are why this is a runbook, not a
-one-shot):
+Repo labels auto-derive from the names (e.g. `AlmaLinux_10_-_BaseOS`), so content
+labels become `Garaventaville_aarch64_AlmaLinux_10_AlmaLinux_10_-_BaseOS` — caught
+by the build's `Garaventaville_aarch64_AlmaLinux_10_*` glob, never by the x86 glob.
 
-- **`raspberrypi`** — the AlmaLinux Pi kernel/firmware repo. Sync it so a rebuilt
-  Pi image can `dnf upgrade` the kernel to the synced level (same freshness
-  guarantee the x86 image gets). Without it the image only carries whatever Pi
-  kernel the `almalinux-bootc-rpi` base shipped.
-- **`Foreman_client`** — set `<VER>` to the same Foreman client version the x86
-  `Foreman_client` repo uses (from the inspector). Provides `katello-host-tools*`.
-- **`EPEL`** — provides `htop`/`btop`/`nmon`/`ocl-icd`. Confirm each is built for
-  aarch64 (most are).
-- **`Duo`** (`duo_unix`) — Duo's RHEL repo aarch64 coverage is **not guaranteed**.
-  If there is no aarch64 `duo_unix`, drop it from `Containerfile.rpi`'s install
-  list (Pi MFA story is then an open item, not a blocker).
+Availability checked live 2026-06-09 (HEAD on `…/repodata/repomd.xml`):
+
+- **Available (200):** BaseOS, AppStream, CRB, EPEL, and `raspberrypi` aarch64.
+- **`raspberrypi`** — AlmaLinux Pi kernel/firmware (aarch64-only). Sync it so a
+  rebuilt Pi image can `dnf upgrade` the kernel to the synced level; without it the
+  image carries whatever Pi kernel the `almalinux-bootc-rpi` base shipped.
+- **Duo — NO aarch64 (404).** `…/RedHat/10/aarch64` does not exist (x86_64 does).
+  `duo_unix` is dropped from `Containerfile.rpi`. **Pi host MFA is an open item.**
+- **Foreman Client — NO el10 aarch64 (404).** `client/latest/el10/` lists only
+  `x86_64/` + `source/`. So `katello-host-tools` / `katello-host-tools-tracer` are
+  unavailable on aarch64 and are dropped from `Containerfile.rpi`. Impact is small
+  for an image-mode host: tracer (RPM "needs-restart") is meaningless on a
+  read-only ostree root that updates via bootc reboot, and image-mode reporting to
+  Katello is already handled by our own `image/bootc-rhsm-facts`. The only real
+  loss is package-profile / enabled-repo upload. **Open item** if we want that back
+  (would need a Foreman aarch64 client build, or building the RPMs ourselves).
 
 Then sync (slow; downloads metadata/packages):
 
@@ -111,11 +122,29 @@ sudo foreman-rake console < foreman/setup_aarch64_activation_key.rb
 ```
 
 Creates **`AlmaLinux 10 aarch64`** bound to Library + Default Organization View
-(idempotent). No per-repo content overrides are needed — the build force-enables
-repos via `--enablerepo`, just like the x86 key. The script also reports whether
-the aarch64 product is synced yet. (Equivalent hammer: `hammer activation-key
-create --organization "$ORG" --name "AlmaLinux 10 aarch64" --lifecycle-environment
-Library --content-view "Default Organization View" --unlimited-hosts`.)
+(idempotent). The script also reports whether the aarch64 product is synced yet.
+(Equivalent hammer: `hammer activation-key create --organization "$ORG" --name
+"AlmaLinux 10 aarch64" --lifecycle-environment Library --content-view "Default
+Organization View" --unlimited-hosts`.)
+
+**This deliberately does NOT mirror the x86 key.** The inspector shows
+`AlmaLinux 10` is bound to a *custom* CV (`AlmaLinux_10`) promoted to
+**Production**, with per-repo content overrides enabling each repo. We skip all of
+that for aarch64 on purpose:
+
+- **Default Org View + Library** auto-exposes every synced repo with no CV
+  publish/promote step — repos are usable the moment the sync finishes. A custom
+  CV would need republishing on every weekly sync to pick up updates.
+- **No content overrides needed** — the build does `--disablerepo='*'
+  --enablerepo='Garaventaville_aarch64_AlmaLinux_10_*'`, which force-enables
+  regardless of the override default. (The x86 overrides set BaseOS/AppStream/…=1
+  and MySQL=0, but that only changes the *default* enabled state.)
+- **No gating is lost.** The x86 CV exists to gate content; here the gated artifact
+  is the bootc *image* (the `bootc` CV → Production path, see `RPI.md`), not the
+  upstream RPM feed. Gating the RPM feed too would be redundant.
+
+Trade-off: under Default Org View the aarch64 consumer also sees the x86 repos in
+`redhat.repo` — harmless, because the arch-led glob never enables them.
 
 ## Step 3 — verify, then unblock the build
 

@@ -75,8 +75,9 @@ changes.
    `Garaventaville_aarch64_AlmaLinux_10_*` — those repos don't exist yet (all our
    AlmaLinux RPM content is x86_64). **Runbook: `RPI-KATELLO.md`** (product +
    repos + key, with helper scripts `foreman/ops/inspect_almalinux_content.rb`
-   and `foreman/setup_aarch64_activation_key.rb`). Note duo_unix aarch64
-   availability is unverified there.
+   and `foreman/setup_aarch64_activation_key.rb`). Repo set confirmed against live
+   Foreman 2026-06-09; duo_unix and katello-host-tools have NO aarch64 builds and
+   were dropped from `Containerfile.rpi` (see RPI-KATELLO.md).
 2. **Build host.** aarch64 + privileged podman + loop devices. Decide: emulate on
    nexus vs a native arm64 builder. (Deferred earlier.)
 3. **First-boot/registration model.** The x86 lane registers via kickstart

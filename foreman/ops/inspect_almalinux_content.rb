@@ -30,9 +30,10 @@ else
   end
 end
 
-puts "\n=== GPG keys (org) — reuse these for the aarch64 repos ==="
-Katello::GpgKey.where(organization_id: org.id).order(:id).each do |g|
-  puts "GPG\tid=#{g.id}\tname=#{g.name.inspect}"
+puts "\n=== GPG keys / content credentials (org) — reuse for aarch64 repos ==="
+gpg_model = defined?(Katello::ContentCredential) ? Katello::ContentCredential : Katello::GpgKey
+gpg_model.where(organization_id: org.id).order(:id).each do |g|
+  puts "GPG\tid=#{g.id}\tname=#{g.name.inspect}\ttype=#{(g.content_type rescue 'n/a')}"
 end
 
 puts "\n=== 'AlmaLinux 10' activation key — the aarch64 key should mirror env/CV ==="
