@@ -14,16 +14,12 @@
 # On the x86 builder this means qemu emulation (slow); a native aarch64 host is
 # better. Build-host decision is still open.
 #
-# ============================ NOT YET BUILDABLE ============================
-# The Katello RUN block below is BLOCKED until aarch64 content exists in
-# Katello. The Garaventaville_AlmaLinux_10_* repos and the 'AlmaLinux 10'
-# activation key are x86_64-only today. See RPI-KATELLO.md for the exact
-# product/repo/key setup that unblocks this (it creates the
-# 'AlmaLinux 10 aarch64' key and the Garaventaville_aarch64_AlmaLinux_10_* repos
-# referenced below). To smoke-test JUST the derive + flashable image path before
-# that's ready, comment out the Katello RUN block (everything between the two
-# "Katello" markers) and the bootc-rhsm-facts timer enable.
-# ==========================================================================
+# The aarch64 Katello content this image installs from ALREADY EXISTS in Foreman
+# (built out separately): product 'AlmaLinux 10 aarch64' (label AlmaLinux_10_aarch64),
+# content view 'AlmaLinux 10 aarch64' (id 21) @ Production, and activation key
+# 'AlmaLinux 10 aarch64' (id 11) bound to that CV. Arch separation is by content
+# view — the key resolves to an aarch64-only CV — so the enablerepo glob below is
+# the same one the x86 ./Containerfile uses. See RPI-KATELLO.md for the inventory.
 FROM quay.io/almalinuxorg/almalinux-bootc-rpi:10
 
 # --- Metadata --------------------------------------------------------------
@@ -32,25 +28,21 @@ LABEL org.opencontainers.image.title="almalinux10-bootc-rpi" \
       org.opencontainers.image.vendor="garaventaville"
 
 # --- Packages from Katello (aarch64) --------------------------- KATELLO ---
-# Mirrors ./Containerfile, with these Pi differences:
-#   * registers to the aarch64 key 'AlmaLinux 10 aarch64' (created per RPI-KATELLO.md)
+# Mirrors ./Containerfile's package set, with two Pi differences:
 #   * drops qemu-guest-agent (no hypervisor on bare-metal Pi)
 #   * adds cloud-init + cloud-utils-growpart so first boot grows the root fs and
 #     applies NoCloud user-data from the CIDATA partition (this replaces
 #     AlmaLinux's separate "bootstrap-image" layer — we bake it in directly).
-#   * drops duo_unix and katello-host-tools[-tracer]: NO aarch64 builds exist
-#     (Duo ships no aarch64; Foreman client has no el10 aarch64), confirmed
-#     2026-06-09. Consequences (Pi-host MFA; package-profile upload) are tracked
-#     in RPI-KATELLO.md; bootc image-mode facts still come from bootc-rhsm-facts.
-# The aarch64 repos use an arch-led content-label prefix
-# (Garaventaville_aarch64_AlmaLinux_10_*) so this glob can NEVER match the x86
-# product's Garaventaville_AlmaLinux_10_* repos, and vice-versa — see
-# RPI-KATELLO.md for why the product label leads with the arch.
+# Every other package is available aarch64 from the 'AlmaLinux 10 aarch64' CV's
+# repos: duo_unix comes from the aarch64 EPEL repo (not Duo's own repo, which has
+# no aarch64), and katello-host-tools[-tracer] are noarch from the Foreman Client
+# repo. The enablerepo glob matches the x86 ./Containerfile — the aarch64 key's CV
+# scopes it to aarch64 content.
 RUN dnf -y install subscription-manager \
  && rpm -Uvh --replacepkgs http://foreman.garaventaville.com/pub/katello-ca-consumer-latest.noarch.rpm \
  && subscription-manager register --org Garaventaville --activationkey 'AlmaLinux 10 aarch64' \
- && dnf -y --disablerepo='*' --enablerepo='Garaventaville_aarch64_AlmaLinux_10_*' upgrade \
- && dnf -y --disablerepo='*' --enablerepo='Garaventaville_aarch64_AlmaLinux_10_*' install \
+ && dnf -y --disablerepo='*' --enablerepo='Garaventaville_AlmaLinux_10_*' upgrade \
+ && dnf -y --disablerepo='*' --enablerepo='Garaventaville_AlmaLinux_10_*' install \
         cloud-init \
         cloud-utils-growpart \
         ipa-client \
@@ -70,6 +62,9 @@ RUN dnf -y install subscription-manager \
         atop \
         nmon \
         ocl-icd \
+        duo_unix \
+        katello-host-tools \
+        katello-host-tools-tracer \
  && { subscription-manager unregister || true; } \
  && { subscription-manager clean || true; } \
  && rm -f /etc/yum.repos.d/almalinux*.repo \

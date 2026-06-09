@@ -1,10 +1,11 @@
-# Read-only. Dump the existing x86_64 AlmaLinux RPM content + the 'AlmaLinux 10'
-# activation key, so the aarch64 siblings can be created to MATCH exactly
-# (same repo set, download policy, GPG, and the env/CV the build registers into).
+# Read-only. Dump the x86_64 AlmaLinux RPM content + the 'AlmaLinux 10' activation
+# key. The aarch64 siblings already exist (product AlmaLinux_10_aarch64, CV id 21,
+# key id 11 — see RPI-KATELLO.md); this stays useful for comparing the two arches
+# and spotting drift between the x86 and aarch64 repo sets.
 #
 # Run on foreman:  sudo foreman-rake console < foreman/ops/inspect_almalinux_content.rb
 #
-# Feeds RPI-KATELLO.md / setup_aarch64_activation_key.rb. Makes no changes.
+# Makes no changes.
 User.current = User.unscoped.find_by!(login: 'admin')
 org = Organization.unscoped.find(4)
 
