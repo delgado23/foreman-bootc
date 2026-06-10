@@ -72,9 +72,15 @@ RUN dnf -y install subscription-manager \
  && rm -rf /var/cache/dnf /var/lib/dnf/history.sqlite* /var/log/dnf* /var/log/hawkey.log
 # ------------------------------------------------------------- /KATELLO ---
 
-# cloud-init resizes /var (not /), matching how AlmaLinux's rpi bootstrap layer
-# repoints growpart at the ostree /var. See image/rpi/10-bootc-growpart.cfg.
+# First-boot root growth on an ostree root needs two tweaks (both from AlmaLinux's
+# rpi bootstrap layer):
+#   1. growpart grows the partition behind /sysroot (the physical root) — config.
+#   2. cloud-init's cc_resizefs defaults to resizing the fs at "/", which is the
+#      read-only ostree deployment; repoint it at /var (same root xfs, writable).
 COPY image/rpi/10-bootc-growpart.cfg /etc/cloud/cloud.cfg.d/
+RUN sed -i 's@resize_what = "/"@resize_what = "/var"@' \
+        /usr/lib/python*/site-packages/cloudinit/config/cc_resizefs.py \
+ && rm -f /usr/lib/python*/site-packages/cloudinit/config/__pycache__/cc_resizefs*.pyc
 
 # --- Services --------------------------------------------------------------
 # No qemu-guest-agent on a Pi. cloud-init is enabled by its RPM presets.

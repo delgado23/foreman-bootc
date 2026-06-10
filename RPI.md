@@ -84,13 +84,24 @@ changes.
    the flashable `.raw`. Setup needed: `dnf install podman`. Watch: 3.7 GiB RAM is
    tight for `bootc-image-builder` (add swap / expect OOM risk on the flashable
    step); SD-card write endurance on a regular builder. (nexus stays x86-only.)
-3. **First-boot/registration model.** The x86 lane registers via kickstart
+3. ~~**Flashable-image pipeline.**~~ **BUILT + structurally validated 2026-06-09**
+   (`build-rpi-image.sh`). Mirrors AlmaLinux's flow: bootc-image-builder → raw,
+   loop-mount, seed cloud-init NoCloud on the CIDATA part, `rpi-bootc-bootloader
+   sync` to lay the Pi firmware. Output is a GPT `.raw` (Pi 4/5) verified to carry
+   the Pi boot firmware + cloud-init seed on p1 and the ostree boot entry on p2.
+   Runs rootful on cthun; needs `dosfstools` (fatlabel) — installed. `REUSE_RAW=1`
+   skips the slow bib step when iterating. NOT yet boot-tested on real hardware,
+   and the validated artifact was built from the pre-`resizefs`-patch `:10` (rebuild
+   the container before cutting a deploy image). Supporting files in `image/rpi/`
+   (`bib-config.toml`, `user-data`, `meta-data`, `README.txt`).
+4. **First-boot/registration model.** The x86 lane registers via kickstart
    `%post` + activation key. On the Pi that has to move into NoCloud `user-data`
    (the CIDATA partition) baked at flash time. Decide what goes in `user-data`
-   vs baked in the image.
-4. **Experimental base.** AlmaLinux's own caveat. Validate `bootc upgrade` works
-   on a real Pi before committing. Watch SD/USB write endurance.
-5. **Wiring into the weekly job** (`main.yml`, Ascender) — last, once 1–4 land.
+   vs baked in the image. (`image/rpi/user-data` is currently a minimal template.)
+5. **Boot-test on real hardware.** Flash the `.raw` to a card, boot a Pi 4,
+   confirm first-boot (cloud-init growpart, networking) and `bootc upgrade` from
+   Katello. AlmaLinux's base is experimental. Watch SD/USB write endurance.
+6. **Wiring into the weekly job** (`main.yml`, Ascender) — last.
 
 ## How to smoke-test the derive path right now (no Katello needed)
 
