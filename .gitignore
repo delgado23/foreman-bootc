@@ -3,6 +3,10 @@
 *.tmp
 *.swp
 
+# python bytecode (ascender/ helper scripts)
+__pycache__/
+*.pyc
+
 # never commit registry credentials or pull secrets
 auth.json
 .netrc

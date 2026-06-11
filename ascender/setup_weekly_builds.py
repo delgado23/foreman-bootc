@@ -1,15 +1,24 @@
 #!/usr/bin/env python3
 """Set up the weekly bootc-image build automation in Ascender (AWX).
 
-Idempotently creates / updates three objects in the Garaventaville organization:
+Idempotently creates / updates these objects in the Garaventaville organization:
 
   1. Project           "foreman-bootc"              (this git repo, SCM = git)
   2. Job Template      "Build bootc Images Weekly"  (runs main.yml on nexus + cthun)
-  3. Schedule          "Weekly bootc Image Build"   (Sundays 03:00 America/New_York)
+  3. Workflow JT       "Weekly bootc Image Build"   (content refresh -> build)
+  4. Schedule          "Weekly bootc Image Build"   (Sundays 03:00 America/New_York,
+                                                     on the workflow, not the JT)
 
 The job template reuses the existing inventory, machine credential, execution
 environment, and a Vault credential (whose password must match the one used to
 `ansible-vault encrypt vars/vault.yml`).
+
+The workflow guarantees freshness: node 1 runs the existing content JT
+"Sync, Publish, Promote, and Cleanup Foreman Content Views" (syncs the AlmaLinux
+repos + republishes/promotes the RPM CVs to Production), and only on its SUCCESS
+does node 2 run the build JT. Combined with `--no-cache` in the build scripts and
+`--pull=always` on the base, every weekly run bakes the latest OS updates. The
+schedule lives on the workflow; any same-named schedule still on the JT is moved.
 
 Nothing is created until you run this. It only talks to the Ascender API; it does
 not touch the build host. Re-running is safe (find-or-create, then PATCH to match).
@@ -43,11 +52,15 @@ INVENTORY_NAME = "Garaventaville Servers"
 MACHINE_CRED_NAME = "Ansible User"           # connects to nexus + cthun, sudo -> bootcbuild
 EE_NAME = "Garaventaville AWX EE (latest)"
 SCM_CRED_NAME = "AWX Git"                     # reads the foreman-bootc repo
-DEFAULT_VAULT_CRED = "linux provisiong"       # decrypts vars/vault.yml
+DEFAULT_VAULT_CRED = "Kubernetes Vault"       # decrypts vars/vault.yml on main
 
 PROJECT_NAME = "foreman-bootc"
 PROJECT_SCM_URL = "https://git.garaventaville.com/Garaventaville/foreman-bootc.git"
 JT_NAME = "Build bootc Images Weekly"
+# Existing content JT that syncs repos + publishes/promotes the RPM CVs to
+# Production. The workflow runs this first so the build pulls current content.
+CONTENT_JT_NAME = "Sync, Publish, Promote, and Cleanup Foreman Content Views"
+WORKFLOW_NAME = "Weekly bootc Image Build"   # content refresh -> build; carries the schedule
 SCHEDULE_NAME = "Weekly bootc Image Build"
 PLAYBOOK = "main.yml"
 # Both build hosts, by arch: nexus (x86_64) builds base + k8s; cthun (aarch64)
@@ -86,6 +99,9 @@ class Api:
 
     def patch(self, path: str, body: dict) -> dict:
         return self._req("PATCH", path, body)
+
+    def delete(self, path: str) -> None:
+        self._req("DELETE", path)
 
     def find(self, endpoint: str, name: str) -> dict | None:
         q = urllib.parse.urlencode({"name": name})
@@ -132,6 +148,31 @@ def ensure(api: Api, endpoint: str, name: str, desired: dict) -> dict:
     return created
 
 
+def ensure_wf_node(api: Api, wfjt_id: int, ujt_id: int, label: str) -> dict:
+    """Find-or-create the workflow node that runs `ujt_id` within the workflow.
+    Nodes are nameless, so they're identified by their unified_job_template."""
+    nodes = api.get(f"/workflow_job_templates/{wfjt_id}/workflow_nodes/").get("results", [])
+    for n in nodes:
+        if n.get("unified_job_template") == ujt_id:
+            print(f"  node '{label}' exists (id {n['id']})")
+            return n
+    created = api.post(f"/workflow_job_templates/{wfjt_id}/workflow_nodes/",
+                       {"unified_job_template": ujt_id})
+    print(f"  created node '{label}' (id {created['id']})")
+    return created
+
+
+def ensure_success_link(api: Api, src: dict, dst: dict) -> None:
+    """Make `dst` run on success of `src` (idempotent)."""
+    current = api.get(
+        f"/workflow_job_template_nodes/{src['id']}/success_nodes/").get("results", [])
+    if any(n["id"] == dst["id"] for n in current):
+        print("  success link already present")
+        return
+    api.post(f"/workflow_job_template_nodes/{src['id']}/success_nodes/", {"id": dst["id"]})
+    print("  linked: content refresh --on success--> build")
+
+
 def next_weekday(weekday: str, hour: int, minute: int, tz_now: dt.datetime) -> dt.datetime:
     """First occurrence of `weekday` at hour:minute that is strictly in the future."""
     target = WEEKDAYS.index(weekday)
@@ -174,6 +215,7 @@ def main() -> None:
     vault_cred = api.require("credentials", args.vault_credential)
     ee = api.require("execution_environments", EE_NAME)
     scm_cred = api.require("credentials", SCM_CRED_NAME)
+    content_jt = api.require("job_templates", CONTENT_JT_NAME)
 
     # Compute the weekly schedule's first run + rrule.
     try:
@@ -191,7 +233,9 @@ def main() -> None:
           f"vault_cred={vault_cred['id']} ee={ee['id']} scm_cred={scm_cred['id']}")
     print(f"  project '{PROJECT_NAME}' <- {PROJECT_SCM_URL} (branch {args.scm_branch})")
     print(f"  job template '{JT_NAME}' -> {PLAYBOOK} limit={LIMIT}")
-    print(f"  schedule '{SCHEDULE_NAME}': {rrule}")
+    print(f"  workflow '{WORKFLOW_NAME}': '{CONTENT_JT_NAME}' (id {content_jt['id']}) "
+          f"--success--> '{JT_NAME}'")
+    print(f"  schedule '{SCHEDULE_NAME}' (on workflow): {rrule}")
     if args.dry_run:
         print("\n--dry-run: no changes made.")
         return
@@ -228,25 +272,49 @@ def main() -> None:
         "verbosity": 1,
     })
 
-    # Attach credentials (machine + vault). POST to the JT's credentials sublist is
-    # idempotent — re-adding an attached credential is a no-op.
+    # Attach credentials (machine + vault). Skip any already attached: this AWX
+    # rejects re-POSTing a machine credential that's already present ("Cannot
+    # assign multiple Machine credentials"), so the loop must be idempotent itself.
     print("  attaching credentials:")
+    attached = {c["id"] for c in
+                api.get(f"/job_templates/{jt['id']}/credentials/").get("results", [])}
     for cred in (machine_cred, vault_cred):
+        if cred["id"] in attached:
+            print(f"    = {cred['name']} (id {cred['id']}) already attached")
+            continue
         api.post(f"/job_templates/{jt['id']}/credentials/", {"id": cred["id"]})
         print(f"    + {cred['name']} (id {cred['id']})")
 
-    # 3. Weekly schedule on the job template.
+    # 3. Workflow: content refresh (node 1) --on success--> build (node 2).
+    # Running the content JT first (sync + publish/promote the RPM CVs to
+    # Production) guarantees the build pulls the latest OS updates.
+    print("\nWorkflow:")
+    wfjt = ensure(api, "workflow_job_templates", WORKFLOW_NAME, {
+        "description": "Refresh Foreman content, then build the bootc images.",
+        "organization": org["id"],
+    })
+    refresh_node = ensure_wf_node(api, wfjt["id"], content_jt["id"], CONTENT_JT_NAME)
+    build_node = ensure_wf_node(api, wfjt["id"], jt["id"], JT_NAME)
+    ensure_success_link(api, refresh_node, build_node)
+
+    # 4. Weekly schedule — on the WORKFLOW, not the JT. A schedule can't be
+    # reparented via PATCH, so if one of this name still hangs off the JT (the
+    # pre-workflow layout), delete it and recreate it on the workflow.
     print("\nSchedule:")
-    existing_sched = api.find("schedules", SCHEDULE_NAME)
     sched_body = {"rrule": rrule, "description": "Sundays 03:00 ET by default.",
                   "enabled": True}
+    existing_sched = api.find("schedules", SCHEDULE_NAME)
+    if existing_sched and existing_sched.get("unified_job_template") != wfjt["id"]:
+        api.delete(f"/schedules/{existing_sched['id']}/")
+        print(f"  removed stale schedule from job template (id {existing_sched['id']})")
+        existing_sched = None
     if existing_sched:
         api.patch(f"/schedules/{existing_sched['id']}/", sched_body)
         print(f"  updated schedule '{SCHEDULE_NAME}' (id {existing_sched['id']})")
     else:
-        created = api.post(f"/job_templates/{jt['id']}/schedules/",
+        created = api.post(f"/workflow_job_templates/{wfjt['id']}/schedules/",
                            {"name": SCHEDULE_NAME, **sched_body})
-        print(f"  created schedule '{SCHEDULE_NAME}' (id {created['id']})")
+        print(f"  created schedule '{SCHEDULE_NAME}' on workflow (id {created['id']})")
 
     print(f"\nDone. First run: {first.isoformat()}  ({args.timezone})")
     print("Reminder: commit an encrypted vars/vault.yml (registry creds) before the "

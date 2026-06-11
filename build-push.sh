@@ -49,7 +49,17 @@ SMOKE_PKG="${SMOKE_PKG:-qemu-guest-agent}"
 LOCAL_REF="${IMAGE}:build"
 
 echo ">> Building ${LOCAL_REF} from ${CONTAINERFILE}"
-podman build --pull=always ${PLATFORM:+--platform "${PLATFORM}"} \
+# --pull=always   : always re-pull the bootc base, so a rebased AlmaLinux base
+#                   (kernel/firmware/core updates) is picked up every build.
+# --no-cache      : do NOT reuse buildah's layer cache. The `dnf upgrade`/install
+#                   layer is keyed on instruction text + parent layers, so when
+#                   the base digest and Containerfile are unchanged buildah would
+#                   reuse it and NEVER re-query Katello — silently baking stale
+#                   RPMs. This is a weekly job on a native host, so we eat the
+#                   full rebuild to guarantee every run pulls the latest OS
+#                   updates Katello has synced. (See gate 3: the aarch64 repos
+#                   must be synced + the CV published for new RPMs to be visible.)
+podman build --pull=always --no-cache ${PLATFORM:+--platform "${PLATFORM}"} \
   -t "${LOCAL_REF}" -f "${CONTAINERFILE}" "${CONTEXT}"
 
 # --- Smoke test: the bootc win is testing the OS as a container first ------
