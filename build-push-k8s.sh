@@ -35,8 +35,13 @@ CP="kubernetes-controlplane"
 WORKER="kubernetes-worker"
 
 # --- Build: common first (pulls the base), then the two role images ---------
+# --no-cache on common: it FROM's almalinux10-bootc and `dnf install`s the
+# Kubernetes packages, the same buildah layer that would otherwise cache-hit
+# past freshly-synced Katello content (see build-push.sh for the full rationale).
+# The role images below build FROM this just-rebuilt common, so when common gets
+# a new digest their cache auto-invalidates — they don't need --no-cache.
 echo ">> Building ${COMMON}:${TAG} (FROM ${REGISTRY}/${ORG}/${PRODUCT}/almalinux10-bootc)"
-podman build --pull=always -t "${COMMON}:${TAG}" \
+podman build --pull=always --no-cache -t "${COMMON}:${TAG}" \
   -f "${CONTEXT}/kubernetes/common/Containerfile" "${CONTEXT}"
 
 # controlplane/worker build FROM the local kubernetes-common — do NOT --pull
