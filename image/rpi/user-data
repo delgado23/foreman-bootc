@@ -1,0 +1,14 @@
+#cloud-config
+# NoCloud user-data for Garaventaville Raspberry Pi bootc images. This file is
+# written to the CIDATA partition by build-rpi-image.sh and read once at first
+# boot. Root management SSH keys (Foreman rex + Ascender) are baked into the
+# image, so NO login user is defined here.
+#
+# Customize per host BEFORE flashing (see README.txt). At minimum set the
+# hostname; a server with a fixed address also needs static networking, which in
+# NoCloud goes in a separate `network-config` file on this same partition (netplan
+# v2), not here.
+#
+# hostname: dns-01
+# fqdn: dns-01.garaventaville.com
+preserve_hostname: false

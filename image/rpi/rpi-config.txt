@@ -1,0 +1,11 @@
+# This file is provided as a placeholder for user options
+# AlmaLinux - few default config options
+[all]
+auto_initramfs=1
+[pi4]
+arm_boost=1
+[all]
+# enable serial console
+enable_uart=1
+dtparam=i2c_arm=on
+dtoverlay=i2c-rtc,ds3231

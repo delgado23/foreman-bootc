@@ -16,7 +16,7 @@
 User.current = User.unscoped.find_by!(login: 'admin')
 org = Organization.unscoped.find(4)
 
-IMAGES = %w[almalinux10-bootc kubernetes-common kubernetes-controlplane kubernetes-worker].freeze
+IMAGES = %w[almalinux10-bootc almalinux10-bootc-rpi kubernetes-common kubernetes-controlplane kubernetes-worker].freeze
 
 product = Katello::Product.where(organization_id: org.id, label: 'bootc').first
 abort "NO_BOOTC_PRODUCT — create it first (foreman/create_product.rb)" if product.nil?

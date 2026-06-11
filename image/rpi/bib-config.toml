@@ -1,0 +1,27 @@
+# bootc-image-builder disk layout for the Raspberry Pi (GPT — Pi 4/5).
+# Three partitions, matching AlmaLinux's bootc-images-rpi:
+#   p1 CIDATA (vfat) -> /boot/efi : also the cloud-init NoCloud seed (user-data)
+#   p2 boot   (xfs)  -> /boot     : kernel + bootloader entries
+#   p3 root   (xfs)  -> /         : the ostree root; grows to fill the card on
+#                                   first boot (cloud-init growpart -> /sysroot)
+# minsize is the floor; bib grows root to use the rest of the target device.
+[[customizations.disk.partitions]]
+type = "plain"
+label = "CIDATA"
+mountpoint = "/boot/efi"
+fs_type = "vfat"
+minsize = "1 GiB"
+
+[[customizations.disk.partitions]]
+type = "plain"
+label = "boot"
+mountpoint = "/boot"
+fs_type = "xfs"
+minsize = "1 GiB"
+
+[[customizations.disk.partitions]]
+type = "plain"
+label = "root"
+mountpoint = "/"
+fs_type = "xfs"
+minsize = "4 GiB"

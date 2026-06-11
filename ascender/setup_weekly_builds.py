@@ -4,7 +4,7 @@
 Idempotently creates / updates three objects in the Garaventaville organization:
 
   1. Project           "foreman-bootc"              (this git repo, SCM = git)
-  2. Job Template      "Build bootc Images Weekly"  (runs main.yml on nexus)
+  2. Job Template      "Build bootc Images Weekly"  (runs main.yml on nexus + cthun)
   3. Schedule          "Weekly bootc Image Build"   (Sundays 03:00 America/New_York)
 
 The job template reuses the existing inventory, machine credential, execution
@@ -40,7 +40,7 @@ BASE_DEFAULT = "https://ascender.garaventaville.com/api/v2"
 # Existing Ascender objects we attach to (names, resolved to ids at runtime).
 ORG_NAME = "Garaventaville"
 INVENTORY_NAME = "Garaventaville Servers"
-MACHINE_CRED_NAME = "Ansible User"           # connects to nexus, sudo -> bootcbuild
+MACHINE_CRED_NAME = "Ansible User"           # connects to nexus + cthun, sudo -> bootcbuild
 EE_NAME = "Garaventaville AWX EE (latest)"
 SCM_CRED_NAME = "AWX Git"                     # reads the foreman-bootc repo
 DEFAULT_VAULT_CRED = "linux provisiong"       # decrypts vars/vault.yml
@@ -50,7 +50,10 @@ PROJECT_SCM_URL = "https://git.garaventaville.com/Garaventaville/foreman-bootc.g
 JT_NAME = "Build bootc Images Weekly"
 SCHEDULE_NAME = "Weekly bootc Image Build"
 PLAYBOOK = "main.yml"
-LIMIT = "nexus.garaventaville.com"
+# Both build hosts, by arch: nexus (x86_64) builds base + k8s; cthun (aarch64)
+# builds the Raspberry Pi image. --limit filters every play, so both must be listed
+# or main.yml's per-host build play silently matches nothing.
+LIMIT = "nexus.garaventaville.com:cthun.garaventaville.com"
 
 WEEKDAYS = ["MO", "TU", "WE", "TH", "FR", "SA", "SU"]
 
@@ -213,7 +216,7 @@ def main() -> None:
     # 2. Job template.
     print("\nJob template:")
     jt = ensure(api, "job_templates", JT_NAME, {
-        "description": "Weekly build/test/push of the bootc images (main.yml on nexus).",
+        "description": "Weekly build/test/push of the bootc images (main.yml on nexus + cthun).",
         "job_type": "run",
         "organization": org["id"],
         "inventory": inventory["id"],

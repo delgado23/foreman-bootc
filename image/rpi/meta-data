@@ -1,0 +1,5 @@
+# NoCloud meta-data. A non-empty instance-id is what makes cloud-init run its
+# per-instance (first-boot) config. Bump this string (or wipe /var/lib/cloud) to
+# force first-boot config to run again on an already-booted card.
+instance-id: garaventaville-rpi-0001
+# local-hostname: dns-01
