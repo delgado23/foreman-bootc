@@ -69,7 +69,10 @@ RUN dnf -y install subscription-manager \
 # without it).
 
 # --- Services --------------------------------------------------------------
-RUN systemctl enable qemu-guest-agent sshd
+# atop + its log-rotation timer give fleet-wide process accounting/history. The
+# atop package is installed above; roles/enterprise_linux used to enable these
+# at runtime — bake the enablement so a freshly-imaged host collects from boot.
+RUN systemctl enable qemu-guest-agent sshd atop.service atop-rotate.timer
 
 # kdump.service fails on these hosts ("No memory reserved for crash kernel":
 # crashkernel reservation yields kexec_crash_size=0 on the small-RAM EFI VMs),

@@ -30,5 +30,14 @@ RUN subscription-manager register --org Garaventaville --activationkey 'AlmaLinu
 
 RUN systemctl enable iscsid
 
+# --- firewalld: worker ports (default 'public' zone) ------------------------
+# Adds worker-specific ports on top of the all-node set baked in
+# kubernetes-common. Previously opened at runtime by roles/worker_storage.
+#   10250/tcp           kubelet API
+#   30000-32767/tcp     NodePort Services range
+RUN firewall-offline-cmd --zone=public \
+        --add-port=10250/tcp \
+        --add-port=30000-32767/tcp
+
 RUN rm -rf /tmp/* /var/tmp/*
 RUN bootc container lint
