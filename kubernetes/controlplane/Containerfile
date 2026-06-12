@@ -29,5 +29,18 @@ RUN subscription-manager register --org Garaventaville --activationkey 'AlmaLinu
  && dnf clean all \
  && rm -rf /var/cache/dnf /var/lib/dnf/history.sqlite* /var/log/dnf* /var/log/hawkey.log
 
+# --- firewalld: control plane ports (default 'public' zone) -----------------
+# Adds control-plane ports on top of the all-node set baked in kubernetes-common.
+# Previously opened at runtime by roles/controlplane_infra. haproxy_port is the
+# fleet-wide constant 7443 (vars/vms.yml).
+#   6443/tcp        kube-apiserver       7443/tcp  HAProxy frontend
+#   2379-2380/tcp   etcd client/peer     2381/tcp  etcd metrics
+RUN firewall-offline-cmd --zone=public \
+        --add-port=6443/tcp \
+        --add-port=7443/tcp \
+        --add-port=2379/tcp \
+        --add-port=2380/tcp \
+        --add-port=2381/tcp
+
 RUN rm -rf /tmp/* /var/tmp/*
 RUN bootc container lint

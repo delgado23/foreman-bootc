@@ -62,6 +62,32 @@ COPY kubernetes/files/containerd-config.toml /etc/containerd/config.toml
 RUN sed -i 's/^FirewallBackend=.*/FirewallBackend=iptables/' /etc/firewalld/firewalld.conf \
  && grep -q '^FirewallBackend=iptables' /etc/firewalld/firewalld.conf
 
+# --- firewalld: all-node ports (default 'public' zone) ----------------------
+# Static, role-wide ports every Kubernetes node needs. Previously opened at
+# runtime by roles/common/tasks/main.yml; baked here so a freshly-imaged node is
+# firewall-correct before Ansible runs. firewall-offline-cmd edits the persisted
+# zone config (/etc/firewalld/zones/public.xml) without a running daemon and is
+# additive, so the worker/controlplane layers stack their ports on top.
+#   9100/tcp  node-exporter metrics      10249/tcp  kube-proxy metrics
+#   8472/udp  Flannel VXLAN              7946/tcp+udp  MetalLB memberlist
+# Masquerade matches roles/common's "Enable masquerade". The per-cluster pod/
+# service CIDR trusted-zone sources stay in Ansible (they are variable-driven).
+# (--add-masquerade must be a separate invocation: firewall-offline-cmd rejects
+# it in the same call as --add-port.)
+RUN firewall-offline-cmd --zone=public \
+        --add-port=9100/tcp \
+        --add-port=10249/tcp \
+        --add-port=8472/udp \
+        --add-port=7946/tcp \
+        --add-port=7946/udp \
+ && firewall-offline-cmd --zone=public --add-masquerade
+
+# --- Disable swap (kubelet requirement) -------------------------------------
+# kubeadm/kubelet refuse to run with swap enabled. roles/common did `swapoff -a`
+# + commented the fstab swap line at runtime; mask swap.target so systemd never
+# activates any fstab- or generator-provided swap unit on this immutable host.
+RUN systemctl mask swap.target
+
 # --- /usr/local on writable /var --------------------------------------------
 # The base image ships /usr/local as a real directory on the read-only ostree
 # root, but the cluster tooling (Helm, and therefore the entire add-ons phase
