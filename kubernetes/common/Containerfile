@@ -72,13 +72,15 @@ RUN sed -i 's/^FirewallBackend=.*/FirewallBackend=iptables/' /etc/firewalld/fire
 #   8472/udp  Flannel VXLAN              7946/tcp+udp  MetalLB memberlist
 # Masquerade matches roles/common's "Enable masquerade". The per-cluster pod/
 # service CIDR trusted-zone sources stay in Ansible (they are variable-driven).
+# (--add-masquerade must be a separate invocation: firewall-offline-cmd rejects
+# it in the same call as --add-port.)
 RUN firewall-offline-cmd --zone=public \
         --add-port=9100/tcp \
         --add-port=10249/tcp \
         --add-port=8472/udp \
         --add-port=7946/tcp \
         --add-port=7946/udp \
-        --add-masquerade
+ && firewall-offline-cmd --zone=public --add-masquerade
 
 # --- Disable swap (kubelet requirement) -------------------------------------
 # kubeadm/kubelet refuse to run with swap enabled. roles/common did `swapoff -a`
