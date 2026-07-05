@@ -124,13 +124,21 @@ RUN chmod 0644 /usr/share/foreman-rex/root.keys /etc/ssh/sshd_config.d/10-forema
  && systemctl enable bootc-rhsm-facts.timer
 
 # --- Nightly Proxmox Backup Server host backup ------------------------------
-# Reused verbatim from ./Containerfile: auth via the backup@pbs!pve API token
-# (plain password auth on backup@pbs hits a TFA wall on this realm), decryption
-# key at /root/backup.key. Both the systemd-encrypted credentials
+# Same units as dns-00/dns-01 (this base OS's own /Containerfile doesn't run
+# this backup, only the Pi does): auth via the backup@pbs!pve API token (plain
+# password auth on backup@pbs hits a TFA wall on this realm), decryption key at
+# /root/backup.key. Both the systemd-encrypted credentials
 # (proxmox-backup-client.password / .encryption-password) and /root/backup.key
 # are host state, not image content — placed by hand per host after first boot,
 # same as the rex/Ascender keys above. Enable only the timer; the service stays
 # disabled and is TriggeredBy=proxmox-backup-client.timer.
+#
+# Unlike dns-00/dns-01 (single-filesystem RPM hosts), a bootc/ostree root splits
+# /etc and /var onto separate mounts from "/" — a plain `root.pxar:/` backup
+# skips them as other mount points, so it would miss cthun's actual monitoring
+# stack data (Grafana DB, Prometheus TSDB, container storage) under
+# /var/home/monitoring. The ExecStart below adds a second archive,
+# monitoring.pxar:/var/home/monitoring, to cover it explicitly.
 COPY image/proxmox-backup-client.service /usr/lib/systemd/system/proxmox-backup-client.service
 COPY image/proxmox-backup-client.timer /usr/lib/systemd/system/proxmox-backup-client.timer
 RUN systemctl enable proxmox-backup-client.timer
