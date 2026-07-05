@@ -42,7 +42,7 @@ RUN dnf -y install subscription-manager \
  && rpm -Uvh --replacepkgs http://foreman.garaventaville.com/pub/katello-ca-consumer-latest.noarch.rpm \
  && subscription-manager register --org Garaventaville --activationkey 'AlmaLinux 10 aarch64' \
  && dnf -y --disablerepo='*' --enablerepo='Garaventaville_AlmaLinux_10_*' upgrade \
- && dnf -y --disablerepo='*' --enablerepo='Garaventaville_AlmaLinux_10_*' install \
+ && dnf -y --disablerepo='*' --enablerepo='Garaventaville_AlmaLinux_10_*' --enablerepo='Garaventaville_Zabbix_*' install \
         cloud-init \
         cloud-utils-growpart \
         ipa-client \
@@ -67,6 +67,7 @@ RUN dnf -y install subscription-manager \
         katello-host-tools \
         katello-host-tools-tracer \
         proxmox-backup-client \
+        zabbix-agent2 \
  && { subscription-manager unregister || true; } \
  && { subscription-manager clean || true; } \
  && rm -f /etc/yum.repos.d/almalinux*.repo \
@@ -101,6 +102,15 @@ RUN set -e; for d in /usr/lib/modules/*/; do \
 # --- Services --------------------------------------------------------------
 # No qemu-guest-agent on a Pi. cloud-init is enabled by its RPM presets.
 RUN systemctl enable sshd
+
+# Zabbix agent2: Server/ServerActive point at the fleet's zabbix.garaventaville.com
+# (not host-specific, safe to bake in). Hostname is left at RPM defaults and set
+# post-boot, same host-state pattern as the PBS credentials above.
+RUN sed -i \
+      -e 's/^Server=.*/Server=zabbix.garaventaville.com/' \
+      -e 's/^ServerActive=.*/ServerActive=zabbix.garaventaville.com/' \
+      /etc/zabbix/zabbix_agent2.conf \
+ && systemctl enable zabbix-agent2
 
 # kdump is useless on a Pi (and can't rebuild its initramfs on a read-only
 # ostree root); mask it as we do on the x86 image.
