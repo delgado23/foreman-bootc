@@ -1,0 +1,13 @@
+[Unit]
+Description=Proxmox Backup Client
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+LoadCredentialEncrypted=proxmox-backup-client.password:/etc/systemd/credentials/proxmox-backup-client.password
+LoadCredentialEncrypted=proxmox-backup-client.encryption-password:/etc/systemd/credentials/proxmox-backup-client.encryption-password
+ExecStart=/usr/bin/proxmox-backup-client backup root.pxar:/ --repository backup@pbs!pve@pbs.garaventaville.com:Primary-PBS -ns Garaventaville --exclude=/var/log/lastlog --keyfile /root/backup.key
+
+[Install]
+WantedBy=multi-user.target

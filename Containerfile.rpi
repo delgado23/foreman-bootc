@@ -66,6 +66,7 @@ RUN dnf -y install subscription-manager \
         i2c-tools \
         katello-host-tools \
         katello-host-tools-tracer \
+        proxmox-backup-client \
  && { subscription-manager unregister || true; } \
  && { subscription-manager clean || true; } \
  && rm -f /etc/yum.repos.d/almalinux*.repo \
@@ -121,6 +122,18 @@ COPY image/bootc-rhsm-facts.timer /usr/lib/systemd/system/bootc-rhsm-facts.timer
 RUN chmod 0644 /usr/share/foreman-rex/root.keys /etc/ssh/sshd_config.d/10-foreman-rex.conf \
  && chmod 0755 /usr/libexec/bootc-rhsm-facts \
  && systemctl enable bootc-rhsm-facts.timer
+
+# --- Nightly Proxmox Backup Server host backup ------------------------------
+# Reused verbatim from ./Containerfile: auth via the backup@pbs!pve API token
+# (plain password auth on backup@pbs hits a TFA wall on this realm), decryption
+# key at /root/backup.key. Both the systemd-encrypted credentials
+# (proxmox-backup-client.password / .encryption-password) and /root/backup.key
+# are host state, not image content — placed by hand per host after first boot,
+# same as the rex/Ascender keys above. Enable only the timer; the service stays
+# disabled and is TriggeredBy=proxmox-backup-client.timer.
+COPY image/proxmox-backup-client.service /usr/lib/systemd/system/proxmox-backup-client.service
+COPY image/proxmox-backup-client.timer /usr/lib/systemd/system/proxmox-backup-client.timer
+RUN systemctl enable proxmox-backup-client.timer
 
 RUN rm -rf /tmp/* /var/tmp/*
 

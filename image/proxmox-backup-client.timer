@@ -1,0 +1,10 @@
+[Unit]
+Description=Midnight Proxmox Backup
+
+[Timer]
+OnCalendar=*-*-* 00:00:00
+Persistent=true
+RandomizedDelaySec=10m
+
+[Install]
+WantedBy=timers.target
