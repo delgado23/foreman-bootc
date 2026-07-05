@@ -106,6 +106,13 @@ RUN systemctl enable sshd
 # Zabbix agent2: Server/ServerActive point at the fleet's zabbix.garaventaville.com
 # (not host-specific, safe to bake in). Hostname is left at RPM defaults and set
 # post-boot, same host-state pattern as the PBS credentials above.
+#
+# The zabbix-agent2 RPM creates its system user via an old-style %pre
+# scriptlet (useradd), which doesn't survive ostree's /etc merge on an
+# upgrade of an already-deployed host (see zabbix-agent2-sysusers.conf) --
+# drop a declarative sysusers.d fallback so systemd-sysusers (which runs at
+# every boot) recreates it if the merge drops it again.
+COPY image/rpi/zabbix-agent2-sysusers.conf /usr/lib/sysusers.d/zabbix-agent2.conf
 RUN sed -i \
       -e 's/^Server=.*/Server=zabbix.garaventaville.com/' \
       -e 's/^ServerActive=.*/ServerActive=zabbix.garaventaville.com/' \
