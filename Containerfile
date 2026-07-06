@@ -33,7 +33,7 @@ RUN dnf -y install subscription-manager \
  && rpm -Uvh --replacepkgs http://foreman.garaventaville.com/pub/katello-ca-consumer-latest.noarch.rpm \
  && subscription-manager register --org Garaventaville --activationkey 'AlmaLinux 10' \
  && dnf -y --disablerepo='*' --enablerepo='Garaventaville_AlmaLinux_10_*' upgrade \
- && dnf -y --disablerepo='*' --enablerepo='Garaventaville_AlmaLinux_10_*' install \
+ && dnf -y --disablerepo='*' --enablerepo='Garaventaville_AlmaLinux_10_*' --enablerepo='Garaventaville_Zabbix_*' install \
         qemu-guest-agent \
         cloud-init \
         ipa-client \
@@ -56,6 +56,7 @@ RUN dnf -y install subscription-manager \
         duo_unix \
         katello-host-tools \
         katello-host-tools-tracer \
+        zabbix-agent2 \
  && { subscription-manager unregister || true; } \
  && { subscription-manager clean || true; } \
  && rm -f /etc/yum.repos.d/almalinux*.repo \
@@ -72,7 +73,16 @@ RUN dnf -y install subscription-manager \
 # atop + its log-rotation timer give fleet-wide process accounting/history. The
 # atop package is installed above; roles/enterprise_linux used to enable these
 # at runtime — bake the enablement so a freshly-imaged host collects from boot.
-RUN systemctl enable qemu-guest-agent sshd atop.service atop-rotate.timer
+#
+# zabbix-agent2's RPM creates its system user via an old-style %pre scriptlet
+# (useradd), which doesn't survive ostree's /etc merge on an upgrade of an
+# already-deployed host (see Containerfile.rpi, which hit this first) — drop
+# the same declarative sysusers.d fallback so systemd-sysusers (which runs at
+# every boot) recreates it if the merge drops it again. Unlike the Pi image,
+# Server/ServerActive/Hostname are NOT baked in here — roles/enterprise_linux
+# sets those at runtime for both package-mode and image-mode x86 hosts.
+COPY image/rpi/zabbix-agent2-sysusers.conf /usr/lib/sysusers.d/zabbix-agent2.conf
+RUN systemctl enable qemu-guest-agent sshd atop.service atop-rotate.timer zabbix-agent2.service
 
 # kdump.service fails on these hosts ("No memory reserved for crash kernel":
 # crashkernel reservation yields kexec_crash_size=0 on the small-RAM EFI VMs),
