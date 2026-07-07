@@ -35,13 +35,14 @@ LABEL org.opencontainers.image.title="kubernetes-common" \
 # keeps the client lib coming from BaseOS (mariadb-connector-c).
 ARG K8S_VERSION=1.35.5-150500.1.1
 RUN subscription-manager register --org Garaventaville --activationkey 'AlmaLinux 10 Kubernetes' \
- && dnf -y --disablerepo='*' --enablerepo='Garaventaville_AlmaLinux_10_*' --disablerepo='*MySQL*' install \
+ && dnf -y --disablerepo='*' --enablerepo='Garaventaville_AlmaLinux_10_*' --enablerepo='Garaventaville_Zabbix_*' --disablerepo='*MySQL*' install \
         containerd \
         firewalld \
         cri-tools \
         kubelet-${K8S_VERSION} \
         kubeadm-${K8S_VERSION} \
         kubectl-${K8S_VERSION} \
+        zabbix-agent2 \
  && { subscription-manager unregister || true; } \
  && { subscription-manager clean || true; } \
  && dnf clean all \
@@ -120,10 +121,21 @@ RUN mv /opt/cni/bin /usr/lib/cni \
 # flexvolume is deprecated/unused here, CSI handles storage).
 RUN mkdir -p /usr/libexec/kubernetes/kubelet-plugins/volume/exec
 
+# --- zabbix-agent2 monitoring ------------------------------------------------
+# zabbix-agent2's RPM creates its system user via an old-style %pre scriptlet
+# (useradd), which doesn't survive ostree's /etc merge on an upgrade of an
+# already-deployed host (see the base Containerfile, which hit this first on
+# the RPi image) — drop the same declarative sysusers.d fallback so
+# systemd-sysusers (which runs at every boot) recreates it if the merge drops
+# it again. Server/ServerActive/Hostname are NOT baked in here — the
+# kubernetes-cluster-provisioning role sets those at runtime, same pattern as
+# the x86 general-fleet image.
+COPY image/rpi/zabbix-agent2-sysusers.conf /usr/lib/sysusers.d/zabbix-agent2.conf
+
 # --- Permissions + services -------------------------------------------------
 RUN chmod 0644 /etc/modules-load.d/k8s.conf /etc/sysctl.d/k8s.conf /etc/containerd/config.toml \
  && chmod 0600 /usr/lib/systemd/system/kubelet.service \
- && systemctl enable containerd kubelet firewalld
+ && systemctl enable containerd kubelet firewalld zabbix-agent2.service
 
 # Clean build leftovers from /tmp and /var/tmp. (See base Containerfile for why
 # /run is left alone.) Then validate the bootc layout at build time.
