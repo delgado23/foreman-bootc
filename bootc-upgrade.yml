@@ -1,0 +1,65 @@
+---
+# bootc-upgrade.yml — Rolling OS upgrade for standalone (non-cluster) image-mode
+# hosts, e.g. cthun (aarch64 Raspberry Pi 4 — runs the LINSTOR/FreeIPA/overwatch
+# Prometheus+Grafana monitoring stack). Pulls the newest build of the image the
+# host already tracks (published by "Daily bootc Image Build" onto
+# foreman.garaventaville.com) and reboots into it if one was staged.
+#
+# Unlike Kubernetes Cluster Maintenance (JT 49), there's no cluster to
+# cordon/drain here — these hosts aren't cluster members, so a plain reboot is
+# safe. Same bootc-upgrade logic as the node_maintenance role in
+# kubernetes-cluster-provisioning, just without the kubectl parts.
+#
+# Usage:
+#   ansible-playbook bootc-upgrade.yml --limit foreman_almalinux10aarch64_imagemode
+- name: Rolling bootc upgrade — standalone image-mode hosts
+  hosts: all
+  gather_facts: false
+  become: true
+  vars:
+    reboot_timeout: 600
+  pre_tasks:
+    - name: Gather facts
+      ansible.builtin.setup:
+
+    - name: Detect image-mode (ostree/bootc) booted system
+      ansible.builtin.stat:
+        path: /run/ostree-booted
+      register: ostree_booted
+
+    - name: Refuse to run against a non-image-mode host
+      ansible.builtin.fail:
+        msg: >-
+          {{ inventory_hostname }} is not an ostree/bootc-booted system — this
+          playbook only handles image-mode hosts (dnf-managed hosts are patched
+          by "Patch Enterprise Linux" instead).
+      when: not ostree_booted.stat.exists
+
+  tasks:
+    - name: Stage OS update (bootc upgrade)
+      ansible.builtin.command: bootc upgrade
+      register: bootc_result
+      # bootc prints "No changes" when the tracked image already matches; anything
+      # else means a new deployment was staged and a reboot is required.
+      changed_when: "'No changes' not in bootc_result.stdout"
+
+    - name: Show bootc upgrade output
+      ansible.builtin.debug:
+        var: bootc_result.stdout_lines
+
+    - name: Reboot node
+      ansible.builtin.reboot:
+        reboot_timeout: "{{ reboot_timeout }}"
+        msg: "Rebooting for bootc image upgrade"
+        pre_reboot_delay: 5
+        post_reboot_delay: 30
+      when: bootc_result.changed
+
+    - name: Upgrade summary
+      ansible.builtin.debug:
+        msg:
+          - "============================================================"
+          - "Host         : {{ inventory_hostname }}"
+          - "OS updated   : {{ bootc_result.changed }}"
+          - "Rebooted     : {{ bootc_result.changed }}"
+          - "============================================================"
