@@ -57,6 +57,7 @@ RUN dnf -y install subscription-manager \
         katello-host-tools \
         katello-host-tools-tracer \
         zabbix-agent2 \
+        openbao \
  && { subscription-manager unregister || true; } \
  && { subscription-manager clean || true; } \
  && rm -f /etc/yum.repos.d/almalinux*.repo \
@@ -67,7 +68,10 @@ RUN dnf -y install subscription-manager \
 # Katello. firewalld is absent from the base — the bootc kickstart omits the
 # `firewall` directive rather than installing it. ocl-icd provides
 # libOpenCL.so.1, which the EPEL htop build links against (htop fails to start
-# without it).
+# without it). openbao is wanted only for its /usr/bin/bao client (hosts
+# authenticate to openbao.garaventaville.com to pull secrets; BAO_ADDR comes from
+# the shared NFS-home ~/.bash_profile) — the RPM's openbao.service /
+# /etc/openbao.d server bits are deliberately left un-enabled below.
 
 # --- Services --------------------------------------------------------------
 # atop + its log-rotation timer give fleet-wide process accounting/history. The

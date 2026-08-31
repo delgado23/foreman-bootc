@@ -68,6 +68,7 @@ RUN dnf -y install subscription-manager \
         katello-host-tools-tracer \
         proxmox-backup-client \
         zabbix-agent2 \
+        openbao \
  && { subscription-manager unregister || true; } \
  && { subscription-manager clean || true; } \
  && rm -f /etc/yum.repos.d/almalinux*.repo \
