@@ -249,6 +249,13 @@ packages are brought up to the synced-repo errata level on **every** build — O
 freshness no longer depends solely on how current the upstream
 `almalinux-bootc:10` base is.
 
+The install set includes `openbao` (EPEL) purely for its `/usr/bin/bao` client —
+image-mode hosts authenticate to `openbao.garaventaville.com` and pull secrets,
+with `BAO_ADDR` supplied by the shared NFS-home `~/.bash_profile`. The RPM's
+`openbao.service` / `/etc/openbao.d` server bits are left un-enabled (the
+`systemctl enable` lines below do not touch it). Same package is added to the
+package-mode path in the companion `linux-provisioning` repo.
+
 A failed build can leave an orphaned Katello consumer (a content host named after
 the build container's short ID); the weekly Ascender run's promote play cleans
 these up automatically after a successful build.
