@@ -34,7 +34,7 @@
     registry: foreman.garaventaville.com
     # almalinux10-bootc has no fixed tag — build-push.sh detects the AlmaLinux
     # release (e.g. 10.2) from the image and also pushes the floating :10 tag.
-    k8s_tag: "1.35.5"     # kubernetes-* — matches K8S_VERSION / build-push-k8s.sh
+    k8s_tag: "1.36.5"     # kubernetes-* — matches K8S_VERSION / build-push-k8s.sh
   tasks:
     - name: Resolve the rootless build user (UID + home, for runtime dir / repo path)
       ansible.builtin.getent:
