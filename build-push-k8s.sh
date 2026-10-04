@@ -10,10 +10,10 @@
 #
 # Usage:
 #   ./build-push-k8s.sh [TAG]
-#   TAG defaults to "1.35.5" (matches the pinned K8S_VERSION in the common
+#   TAG defaults to "1.36.5" (matches the pinned K8S_VERSION in the common
 #   Containerfile). Override REGISTRY/ORG/PRODUCT via env vars.
 #   EXTRA_TAGS (space-separated) publishes each image under additional tags too
-#   (e.g. a dated tag for the weekly Ascender build: EXTRA_TAGS="1.35.5-20260607").
+#   (e.g. a dated tag for the weekly Ascender build: EXTRA_TAGS="1.36.5-20260607").
 #
 # Login first (interactive, once per session / until token expires):
 #   podman login "$REGISTRY"
@@ -27,7 +27,7 @@ set -euo pipefail
 REGISTRY="${REGISTRY:-foreman.garaventaville.com}"
 ORG="${ORG:-garaventaville}"     # org label "Garaventaville", lowercased
 PRODUCT="${PRODUCT:-bootc}"      # Katello product the images are pushed into
-TAG="${1:-${TAG:-1.35.5}}"
+TAG="${1:-${TAG:-1.36.5}}"
 CONTEXT="${CONTEXT:-$(dirname "$0")}"   # repo root — Containerfiles COPY from kubernetes/files/
 
 COMMON="kubernetes-common"
@@ -54,11 +54,24 @@ echo ">> Building ${WORKER}:${TAG} (FROM ${COMMON}:${TAG})"
 podman build --pull=false --build-arg "K8S_IMAGE_TAG=${TAG}" -t "${WORKER}:${TAG}" \
   -f "${CONTEXT}/kubernetes/worker/Containerfile" "${CONTEXT}"
 
+# The tag IS the Kubernetes version (hosts, the host groups and the cluster
+# upgrade playbook all key off it): refuse an image whose kubeadm disagrees.
+check_k8s_version() {
+  local got
+  got="$(podman run --rm "$1" kubeadm version -o short)"
+  if [ "${got}" != "v${TAG}" ]; then
+    echo "!! $1 ships kubeadm ${got}, expected v${TAG} -- K8S_VERSION and the tag disagree" >&2
+    exit 1
+  fi
+  echo "   $1: kubeadm ${got} matches the tag: OK"
+}
+
 # --- Smoke test: the bootc win is testing the OS as a container first -------
 echo ">> Smoke test: bootc version + baked package presence"
 podman run --rm "${COMMON}:${TAG}" bootc --version
 podman run --rm "${COMMON}:${TAG}" rpm -q kubeadm kubelet kubectl containerd \
   && echo "   common: kube* + containerd present: OK"
+check_k8s_version "${COMMON}:${TAG}"
 podman run --rm "${CP}:${TAG}" rpm -q keepalived haproxy \
   && echo "   controlplane: keepalived + haproxy present: OK"
 podman run --rm "${WORKER}:${TAG}" rpm -q lvm2 gdisk iscsi-initiator-utils \
@@ -110,6 +123,7 @@ if [ "${SMOKE_PULL:-1}" != "0" ]; then
   podman run --rm "${COMMON_REF}" bootc --version
   podman run --rm "${COMMON_REF}" rpm -q kubeadm kubelet kubectl containerd \
     && echo "   common pulled OK: kube* + containerd present"
+  check_k8s_version "${COMMON_REF}"
   podman run --rm "${CP_REF}" rpm -q keepalived haproxy \
     && echo "   controlplane pulled OK: keepalived + haproxy present"
   podman run --rm "${WORKER_REF}" rpm -q lvm2 gdisk iscsi-initiator-utils \
