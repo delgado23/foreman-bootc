@@ -7,10 +7,10 @@
 # live here.
 #
 # Build context is the repo root:
-#   podman build -t kubernetes-controlplane:1.36.5 \
-#     --build-arg K8S_IMAGE_TAG=1.36.5 --pull=false \
+#   podman build -t kubernetes-controlplane:1.37.1 \
+#     --build-arg K8S_IMAGE_TAG=1.37.1 --pull=false \
 #     -f kubernetes/controlplane/Containerfile .
-ARG K8S_IMAGE_TAG=1.36.5
+ARG K8S_IMAGE_TAG=1.37.1
 FROM kubernetes-common:${K8S_IMAGE_TAG}
 
 LABEL org.opencontainers.image.title="kubernetes-controlplane" \

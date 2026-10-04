@@ -10,10 +10,10 @@
 #
 # Usage:
 #   ./build-push-k8s.sh [TAG]
-#   TAG defaults to "1.36.5" (matches the pinned K8S_VERSION in the common
+#   TAG defaults to "1.37.1" (matches the pinned K8S_VERSION in the common
 #   Containerfile). Override REGISTRY/ORG/PRODUCT via env vars.
 #   EXTRA_TAGS (space-separated) publishes each image under additional tags too
-#   (e.g. a dated tag for the weekly Ascender build: EXTRA_TAGS="1.36.5-20260607").
+#   (e.g. a dated tag for the weekly Ascender build: EXTRA_TAGS="1.37.1-20260607").
 #
 # Login first (interactive, once per session / until token expires):
 #   podman login "$REGISTRY"
@@ -27,7 +27,7 @@ set -euo pipefail
 REGISTRY="${REGISTRY:-foreman.garaventaville.com}"
 ORG="${ORG:-garaventaville}"     # org label "Garaventaville", lowercased
 PRODUCT="${PRODUCT:-bootc}"      # Katello product the images are pushed into
-TAG="${1:-${TAG:-1.36.5}}"
+TAG="${1:-${TAG:-1.37.1}}"
 CONTEXT="${CONTEXT:-$(dirname "$0")}"   # repo root — Containerfiles COPY from kubernetes/files/
 
 COMMON="kubernetes-common"
