@@ -10,7 +10,7 @@
 # that playbook detects image-mode (/run/ostree-booted) and skips them.
 #
 # Build context is the repo root (so the COPY paths below resolve):
-#   podman build -t kubernetes-common:1.36.5 -f kubernetes/common/Containerfile .
+#   podman build -t kubernetes-common:1.37.1 -f kubernetes/common/Containerfile .
 FROM foreman.garaventaville.com/garaventaville/bootc/almalinux10-bootc:10
 
 LABEL org.opencontainers.image.title="kubernetes-common" \
@@ -33,7 +33,7 @@ LABEL org.opencontainers.image.title="kubernetes-common" \
 # mariadb-connector-c dependency (libmysqlclient) from mysql-community-libs,
 # which drags in mysql-community-server and conflicts with mariadb. Disabling it
 # keeps the client lib coming from BaseOS (mariadb-connector-c).
-ARG K8S_VERSION=1.36.5-150500.1.1
+ARG K8S_VERSION=1.37.1-150500.1.1
 RUN subscription-manager register --org Garaventaville --activationkey 'AlmaLinux 10 Kubernetes' \
  && dnf -y --disablerepo='*' --enablerepo='Garaventaville_AlmaLinux_10_*' --enablerepo='Garaventaville_Zabbix_*' --disablerepo='*MySQL*' install \
         containerd \

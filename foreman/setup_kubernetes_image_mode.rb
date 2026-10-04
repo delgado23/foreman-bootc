@@ -16,7 +16,7 @@
 User.current = User.unscoped.find_by!(login: 'admin')
 org = Organization.unscoped.find(4)
 
-TAG = ENV.fetch('K8S_TAG', '1.36.5')
+TAG = ENV.fetch('K8S_TAG', '1.37.1')
 
 # Install-time images come from the smoke-test-gated PRODUCTION content view, not
 # the raw Library push path. Resolve the real promoted registry path per image

@@ -79,11 +79,11 @@ image-mode via `/run/ostree-booted` and skips the now-baked package installs).
 
 ```
 almalinux10-bootc:10                 (floating major tag; :<release> e.g. 10.2 too)
-  └── kubernetes-common:1.36.5        containerd + config, kubelet/kubeadm/kubectl
+  └── kubernetes-common:1.37.1        containerd + config, kubelet/kubeadm/kubectl
                                        (PINNED NVR), cri-tools, firewalld, k8s
                                        modules/sysctl, iptables firewall backend
-        ├── kubernetes-controlplane:1.36.5   + keepalived, haproxy
-        └── kubernetes-worker:1.36.5         + lvm2, gdisk, iscsi (iscsid enabled)
+        ├── kubernetes-controlplane:1.37.1   + keepalived, haproxy
+        └── kubernetes-worker:1.37.1         + lvm2, gdisk, iscsi (iscsid enabled)
 ```
 
 The **tag is the Kubernetes version** — image-mode is the version pin, and the
@@ -101,8 +101,11 @@ to a new Kubernetes version:
    (`K8S_TAG=<tag> foreman-rake console < foreman/setup_kubernetes_image_mode.rb`),
    so new and scaled-out nodes boot it.
 
-The weekly build refreshes only the current `k8s_tag`. Once it moves on, nodes
-still on the old tag get no further OS patches until they're upgraded.
+The image build (Ascender JT 62, launched by hand; its "OS Update Workflow"
+schedule is disabled) refreshes only the current `k8s_tag`. Once it moves on,
+nodes still on the old tag get no further OS patches until they're upgraded.
+Don't run it during a cluster upgrade: it re-pushes the tag, and the upgrade
+refuses any image whose digest differs from the one its preflight resolved.
 
 containerd's sandbox (pause) image comes from the Katello mirror of
 registry.k8s.io (`…/production/kubernetes-images/kubernetes-images/pause`), like
@@ -111,10 +114,10 @@ kubeadm's `imageRepository`.
 ```bash
 # on nexus, as bootcbuild, in the repo checkout
 podman login foreman.garaventaville.com
-./build-push-k8s.sh 1.36.5
-# -> foreman.garaventaville.com/garaventaville/bootc/kubernetes-common:1.36.5
-#    foreman.garaventaville.com/garaventaville/bootc/kubernetes-controlplane:1.36.5
-#    foreman.garaventaville.com/garaventaville/bootc/kubernetes-worker:1.36.5
+./build-push-k8s.sh 1.37.1
+# -> foreman.garaventaville.com/garaventaville/bootc/kubernetes-common:1.37.1
+#    foreman.garaventaville.com/garaventaville/bootc/kubernetes-controlplane:1.37.1
+#    foreman.garaventaville.com/garaventaville/bootc/kubernetes-worker:1.37.1
 ```
 
 The Kubernetes host groups (`AlmaLinux 10/Kubernetes Controlplane Node` id 29,
@@ -144,13 +147,13 @@ and Production keeps its prior good version. Production is what hosts install fr
 Each run publishes a refreshed pinned tag plus an immutable dated snapshot. For
 the **base image** that is three tags: the floating `:10` (what hosts pin), the
 detected release `:10.2`, and the snapshot `:10.2-20260607`. For the **k8s
-images** it is the two tags `:1.36.5` and `:1.36.5-20260607` (the tag is the
+images** it is the two tags `:1.37.1` and `:1.37.1-20260607` (the tag is the
 Kubernetes version — see below). `build-push.sh` honors `DATE_STAMP` for the
 dated snapshot; both scripts honor `EXTRA_TAGS="<tag> [tag...]"` for ad-hoc tags.
 
 ```
 main.yml                target nexus, sudo -> bootcbuild, git pull, login,
-                        ./build-push.sh  +  ./build-push-k8s.sh 1.36.5
+                        ./build-push.sh  +  ./build-push-k8s.sh 1.37.1
                         (build-push.sh auto-detects the release tag)
 vars/vault.yml          registry_username / registry_password (ansible-vault)
 ascender/setup_weekly_builds.py   creates the Ascender objects via the API
