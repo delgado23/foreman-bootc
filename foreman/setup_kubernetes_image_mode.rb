@@ -12,11 +12,18 @@
 # and binds the bootc provisioning template combinations (provision id 258,
 # PXEGrub2 id 259). The activation key (AlmaLinux 10 Kubernetes) is left as-is.
 #
-# Run on foreman:  sudo foreman-rake console < setup_kubernetes_image_mode.rb
+# Run on foreman, setting the tag on the FIRST line of the console input:
+#   { echo "ENV['K8S_TAG']='1.37.1'"; cat setup_kubernetes_image_mode.rb; } | sudo foreman-rake console
+# `sudo K8S_TAG=... foreman-rake` does NOT work: foreman-rake re-execs through
+# `runuser -w RAILS_LOG_TO_STDOUT - foreman`, which drops every other variable.
+# There is deliberately no default -- on 2026-10-04 a dropped K8S_TAG silently
+# fell back to the default and pointed the host groups at the wrong version.
 User.current = User.unscoped.find_by!(login: 'admin')
 org = Organization.unscoped.find(4)
 
-TAG = ENV.fetch('K8S_TAG', '1.37.1')
+TAG = ENV['K8S_TAG'].to_s.strip
+abort "K8S_TAG not set (see the header for how to pass it) -- nothing changed" unless TAG.match?(/\A\d+\.\d+\.\d+\z/)
+puts "TAG\t#{TAG}"
 
 # Install-time images come from the smoke-test-gated PRODUCTION content view, not
 # the raw Library push path. Resolve the real promoted registry path per image

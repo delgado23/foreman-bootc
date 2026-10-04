@@ -98,7 +98,8 @@ to a new Kubernetes version:
 3. Upgrade running clusters in place with `upgrade.yml` in
    kubernetes-cluster-provisioning, one minor at a time.
 4. Afterwards, point the host groups at the new tag
-   (`K8S_TAG=<tag> foreman-rake console < foreman/setup_kubernetes_image_mode.rb`),
+   (`{ echo "ENV['K8S_TAG']='<tag>'"; cat foreman/setup_kubernetes_image_mode.rb; } | sudo foreman-rake console`
+   -- an environment variable does not survive foreman-rake; the script aborts without a tag),
    so new and scaled-out nodes boot it.
 
 The image build (Ascender JT 62, launched by hand; its "OS Update Workflow"
