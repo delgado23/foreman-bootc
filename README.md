@@ -29,6 +29,7 @@ foreman/
   setup_content_view.rb  create the gated "bootc" content view, publish + promote
   set_unauth_pull.rb     move anonymous pull from Library (staging) to Production
   load_templates.rb      load both templates into Foreman + set as OS defaults
+  setup_proxmox_firmware.rb  Proxmox profiles: efidisk + Secure Boot + rng0; shim PXE loader
   ops/                   one-off recovery/inspection scripts (incident reference)
                          (incl. inspect_content_view.rb — read-only CV/path report)
 main.yml                 Ansible playbook: weekly build/test/push of all images
@@ -234,6 +235,52 @@ host = choose any other group (or none). Set up by
 `foreman/setup_image_mode_hostgroup.rb`. NOTE: don't set the bootc templates as
 the OS *default* — that forces bootc on every AlmaLinux 10 host (incl. existing
 RPM/Kubernetes groups that rely on the default).
+
+## Proxmox VM firmware: EFI disk, Secure Boot and RNG at create time
+
+`foreman/setup_proxmox_firmware.rb` makes Foreman create Proxmox VMs with their
+EFI disk from the start, so the provisioning callback no longer has to add one
+after install with a stop/start cycle. For the Proxmox-Small and Proxmox-Medium
+compute profiles it sets `is_secure_boot=1` (foreman_fog_proxmox then creates
+`efidisk0`: 4m, Microsoft keys pre-enrolled) and `rng0=source=/dev/urandom`.
+It also switches host groups AlmaLinux 9 (22) and AlmaLinux 10 (24) to the
+**Grub2 UEFI SecureBoot** PXE loader, and pins the Kubernetes host groups
+(29/30) to the old **Grub2 UEFI** loader until their profiles get the same change.
+
+```bash
+# on foreman.garaventaville.com, from the repo checkout
+{ echo "ENV['FW_DRY_RUN']='1'"; cat foreman/setup_proxmox_firmware.rb; } | sudo foreman-rake console  # plan only
+sudo foreman-rake console < foreman/setup_proxmox_firmware.rb                                     # apply (idempotent)
+{ echo "ENV['FW_ROLLBACK']='1'"; cat foreman/setup_proxmox_firmware.rb; } | sudo foreman-rake console  # undo
+```
+
+Why each piece is needed:
+
+- **rng0.** An efidisk (`efitype=4m`) moves the VM from Proxmox's frozen 2 MB
+  OVMF (edk2 2023.02) to the current 4 MB OVMF. Since PVE 8.4 that firmware
+  disables PXE for guests without a random number generator, and `x86-64-v3`
+  exposes no RDRAND/RDSEED. Without `rng0` it never PXEs:
+  `BdsDxe: No bootable option or device was found`.
+- **Grub2 UEFI SecureBoot.** With Secure Boot on, the firmware refuses
+  `grubx64.efi`, which is signed only by AlmaLinux. The SecureBoot loader serves
+  the Microsoft-signed shim, whose embedded AlmaLinux Secure Boot CA signs grub
+  and the AlmaLinux 9/10 installer kernels. Shim also boots with Secure Boot off.
+
+Gotchas:
+
+- The plugin has no form field for `rng0`. It reaches Proxmox only because
+  unknown `config_attributes` keys pass through to the VM-create call. **Saving
+  one of these compute profiles in the Foreman UI may drop it**, so re-run the
+  script after any UI edit. The linux-provisioning callback fails a build whose
+  VM has no `efidisk0`, and warns when `rng0` is missing.
+- The script refuses to run on a foreman_fog_proxmox series other than 1.0.x,
+  because both pass-through behaviours were read from 1.0.0.
+- VMs built before this change have an efidisk but no `rng0`, so they cannot be
+  PXE-rebuilt in place. Add `rng0`, cold-restart the VM, and give the host the
+  SecureBoot loader first.
+- Hosts that store no PXE loader of their own inherit the host group's the next
+  time Foreman rewrites their DHCP/TFTP records. That is harmless (shim boots
+  with or without Secure Boot); the script lists those hosts.
 
 ## bootc hosts can't be configured via %post — bake it into the image
 
