@@ -31,20 +31,25 @@ TIMEOUT = 3
 SETTING = 'local_boot_PXEGrub2'
 puts "MODE\t#{ROLLBACK ? 'rollback' : 'apply'}#{DRY_RUN ? ' (dry run)' : ''}"
 
+# Rollback only repoints the setting, so it must not depend on anything the
+# apply path validates (the stock timeout line, the organization): it has to
+# work after a Foreman upgrade changed the stock template. It does check that
+# the template it points at exists.
 stock = ProvisioningTemplate.unscoped.find_by!(name: STOCK_NAME)
-raise "#{STOCK_NAME}: expected exactly one 'set timeout=20'" unless stock.template.scan(/^set timeout=20$/).size == 1
-body = stock.template.sub(/^set timeout=20$/, "set timeout=#{TIMEOUT}")
-body = body.sub("name: #{STOCK_NAME}\n", "name: #{CLONE_NAME}\n")
-body = body.sub("  Do not associate or change the name.\n", "  Clone of \"#{STOCK_NAME}\" with a #{TIMEOUT} s menu timeout, managed by\n  foreman-bootc foreman/setup_local_boot_template.rb; re-run that to refresh it.\n")
-
-# The local boot template is looked up by name, which can be scoped to the
-# current organization/location, so give the clone the stock template's
-# taxonomies plus every location of the Garaventaville organization.
-org = Organization.unscoped.find_by!(name: 'Garaventaville')
-orgs = (stock.organizations.to_a + [org]).uniq
-locs = (stock.locations.to_a + org.locations.to_a).uniq
 
 unless ROLLBACK
+  raise "#{STOCK_NAME}: expected exactly one 'set timeout=20'" unless stock.template.scan(/^set timeout=20$/).size == 1
+  body = stock.template.sub(/^set timeout=20$/, "set timeout=#{TIMEOUT}")
+  body = body.sub("name: #{STOCK_NAME}\n", "name: #{CLONE_NAME}\n")
+  body = body.sub("  Do not associate or change the name.\n", "  Clone of \"#{STOCK_NAME}\" with a #{TIMEOUT} s menu timeout, managed by\n  foreman-bootc foreman/setup_local_boot_template.rb; re-run that to refresh it.\n")
+
+  # The local boot template is looked up by name, which can be scoped to the
+  # current organization/location, so give the clone the stock template's
+  # taxonomies plus every location of the Garaventaville organization.
+  org = Organization.unscoped.find_by!(name: 'Garaventaville')
+  orgs = (stock.organizations.to_a + [org]).uniq
+  locs = (stock.locations.to_a + org.locations.to_a).uniq
+
   clone = ProvisioningTemplate.unscoped.find_by(name: CLONE_NAME)
   state = clone.nil? ? 'create' : (clone.template == body && clone.organizations.to_a.sort_by(&:id) == orgs.sort_by(&:id) && clone.locations.to_a.sort_by(&:id) == locs.sort_by(&:id) ? 'unchanged' : 'update')
   unless DRY_RUN || state == 'unchanged'

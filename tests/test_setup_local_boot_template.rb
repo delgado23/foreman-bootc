@@ -40,12 +40,12 @@ def check(label, ok)
   $failures << label unless ok
 end
 
-def initial_state(stock_body: STOCK_BODY, parameters: [])
+def initial_state(stock_body: STOCK_BODY, parameters: [], organizations: [{ 'id' => 4, 'name' => 'Garaventaville', 'location_ids' => [3, 5] }])
   {
     'locations' => [{ 'id' => 3, 'name' => 'Leland, NC' }, { 'id' => 5, 'name' => 'Default Location' }],
-    'organizations' => [{ 'id' => 4, 'name' => 'Garaventaville', 'location_ids' => [3, 5] }],
+    'organizations' => organizations,
     'templates' => [{ 'name' => STOCK, 'template' => stock_body, 'template_kind' => 'PXEGrub2', 'snippet' => false,
-                      'locked' => true, 'organization_ids' => [4], 'location_ids' => [5] }],
+                      'locked' => true, 'organization_ids' => organizations.map { |o| o['id'] } & [4], 'location_ids' => [5] }],
     'settings' => { 'local_boot_PXEGrub2' => STOCK },
     'parameters' => parameters,
   }
@@ -132,7 +132,30 @@ Dir.mktmpdir do |dir|
     check("guard #{i + 1}: state unchanged", JSON.parse(before) == JSON.parse(File.read(path)))
   end
 
-  # 7. A parameter that overrides the setting is reported.
+  # 7. Rollback only repoints the setting: it must work when the stock template
+  #    no longer has exactly one 'set timeout=20' (e.g. after a Foreman upgrade)
+  #    and when the organization the apply path needs is gone.
+  {
+    'stock without the timeout line' => initial_state(stock_body: STOCK_BODY.sub("set timeout=20\n", '')),
+    'stock with two timeout lines' => initial_state(stock_body: STOCK_BODY.sub("set timeout=20\n", "set timeout=20\nset timeout=20\n")),
+    'no Garaventaville organization' => initial_state(organizations: []),
+  }.each do |label, state|
+    state['settings']['local_boot_PXEGrub2'] = CLONE
+    File.write(path, JSON.generate(state))
+    out, st, s = run(path, 'LB_ROLLBACK' => '1')
+    check("rollback with #{label}: exits 0", st.success?)
+    check("rollback with #{label}: restores the stock setting", s['settings']['local_boot_PXEGrub2'] == STOCK)
+    check("rollback with #{label}: touches no template", s['templates'] == state['templates'])
+  end
+
+  # 8. Apply still refuses when the organization is gone, without changing anything.
+  File.write(path, JSON.generate(initial_state(organizations: [])))
+  before = File.read(path)
+  out, st, = run(path)
+  check('apply without the organization aborts', !st.success?)
+  check('apply without the organization changes nothing', JSON.parse(before) == JSON.parse(File.read(path)))
+
+  # 9. A parameter that overrides the setting is reported.
   File.write(path, JSON.generate(initial_state(parameters: [{ 'name' => 'local_boot_PXEGrub2', 'type' => 'CommonParameter', 'reference_id' => nil, 'value' => 'Other' }])))
   out, = run(path, 'LB_DRY_RUN' => '1')
   check('override parameter reported', out.include?("OVERRIDES\tCommonParameter:=Other"))
