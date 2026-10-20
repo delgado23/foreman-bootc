@@ -31,6 +31,9 @@ foreman/
   load_templates.rb      load both templates into Foreman + set as OS defaults
   setup_proxmox_firmware.rb  Proxmox profiles: efidisk + Secure Boot + rng0; shim PXE loader
   setup_local_boot_template.rb  3 s clone of the locked PXEGrub2 local-boot template
+tests/
+  fake_foreman.rb        plain-Ruby stand-ins for the Foreman models the scripts touch
+  test_setup_local_boot_template.rb  behaviour tests (CI: .gitea/workflows/ci.yml)
   ops/                   one-off recovery/inspection scripts (incident reference)
                          (incl. inspect_content_view.rb — read-only CV/path report)
 main.yml                 Ansible playbook: weekly build/test/push of all images
