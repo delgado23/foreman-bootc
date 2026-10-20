@@ -1,0 +1,103 @@
+# Build Proxmox VMs with their EFI disk, Secure Boot and a VirtIO RNG from the
+# start, and give their host groups the shim (Secure Boot) PXE loader.
+#
+# Why all three are needed:
+#  * An efidisk0 (efitype=4m) moves the VM from Proxmox's frozen 2 MB OVMF
+#    (edk2 2023.02) to the current 4 MB OVMF. Since PVE 8.4 that firmware turns
+#    off its network stack when the guest has no random number generator, and
+#    x86-64-v3 exposes no RDRAND/RDSEED. Without rng0 it never PXEs at all:
+#    "BdsDxe: No bootable option or device was found".
+#  * is_secure_boot=1 makes foreman_fog_proxmox create that efidisk itself
+#    (4m, Microsoft keys pre-enrolled), so nothing has to add it after install.
+#  * With Secure Boot on, the firmware refuses the "Grub2 UEFI" loader
+#    (grubx64.efi is signed only by AlmaLinux). "Grub2 UEFI SecureBoot" serves
+#    the Microsoft-signed shim, which trusts the AlmaLinux CA that signs grub
+#    and the installer kernels. Shim also boots fine with Secure Boot off.
+#
+# The plugin has no form field for rng0; it reaches Proxmox because unknown
+# config_attributes keys pass straight through to the create call. Saving one
+# of these compute profiles in the Foreman UI may drop it, so re-run this
+# script after any UI edit.
+#
+# The Kubernetes host groups (29/30) inherit their PXE loader from AlmaLinux 10
+# (24); they are pinned to "Grub2 UEFI" here so JT 50 builds don't change until
+# the k8s compute profiles get the same treatment.
+#
+# Run on Foreman (idempotent, prints before -> after):
+#   sudo foreman-rake console < foreman/setup_proxmox_firmware.rb
+# Dry run, changes nothing:
+#   { echo "ENV['FW_DRY_RUN']='1'"; cat foreman/setup_proxmox_firmware.rb; } | sudo foreman-rake console
+# Only some compute profiles, host groups untouched (e.g. a throwaway test copy):
+#   { echo "ENV['FW_PROFILES']='Proxmox-Small-SB-test'"; echo "ENV['FW_HOSTGROUPS']='0'"; cat foreman/setup_proxmox_firmware.rb; } | sudo foreman-rake console
+# Roll back to the previous state (Secure Boot off, no rng0, old loaders):
+#   { echo "ENV['FW_ROLLBACK']='1'"; cat foreman/setup_proxmox_firmware.rb; } | sudo foreman-rake console
+# NB: foreman-rake console evaluates piped stdin line by line, so keep method
+# chains on one line (a leading-dot continuation would split them).
+User.current = User.unscoped.find_by!(login: 'admin')
+DRY_RUN  = ENV['FW_DRY_RUN'] == '1'
+ROLLBACK = ENV['FW_ROLLBACK'] == '1'
+PROFILES = (ENV['FW_PROFILES'] || 'Proxmox-Small,Proxmox-Medium').split(',').map(&:strip)
+DO_HOSTGROUPS = ENV['FW_HOSTGROUPS'] != '0'
+RNG0 = 'source=/dev/urandom'
+SB_LOADER = 'Grub2 UEFI SecureBoot'
+OLD_LOADER = 'Grub2 UEFI'
+puts "MODE\t#{ROLLBACK ? 'rollback' : 'apply'}#{DRY_RUN ? ' (dry run)' : ''}"
+
+# The rng0 pass-through and the is_secure_boot -> efidisk0 behaviour were read
+# from foreman_fog_proxmox 1.0.0; re-check both before trusting another series.
+plugin = Gem.loaded_specs['foreman_fog_proxmox']&.version
+raise "foreman_fog_proxmox #{plugin.inspect} not 1.0.x; re-verify parsed_typed_config and process_firmware_attributes first" unless plugin && plugin.segments.first(2) == [1, 0]
+puts "VERSIONS\tforeman=#{SETTINGS[:version]}\tforeman_fog_proxmox=#{plugin}"
+
+cr = ComputeResource.unscoped.find_by!(name: 'Proxmox')
+PROFILES.each do |pname|
+  cp = ComputeProfile.unscoped.find_by!(name: pname)
+  ca = ComputeAttribute.unscoped.find_by!(compute_resource_id: cr.id, compute_profile_id: cp.id)
+  attrs = ca.vm_attrs.deep_dup
+  cfg = attrs['config_attributes'] ||= {}
+  raise "#{pname}: expected bios=ovmf, found #{cfg['bios'].inspect}" unless cfg['bios'] == 'ovmf'
+  before = { 'is_secure_boot' => cfg['is_secure_boot'], 'rng0' => cfg['rng0'] }
+  if ROLLBACK
+    cfg['is_secure_boot'] = '0'
+    cfg.delete('rng0')
+  else
+    cfg['is_secure_boot'] = '1'
+    cfg['rng0'] = RNG0
+  end
+  after = { 'is_secure_boot' => cfg['is_secure_boot'], 'rng0' => cfg['rng0'] }
+  if before == after
+    puts "PROFILE\t#{pname}\tunchanged\t#{after.to_json}"
+    next
+  end
+  unless DRY_RUN
+    ca.vm_attrs = attrs
+    ca.save!
+  end
+  puts "PROFILE\t#{pname}\t#{before.to_json} -> #{after.to_json}"
+end
+
+if DO_HOSTGROUPS
+  # id => [loader when applied, loader when rolled back]; '' means inherit.
+  { 22 => [SB_LOADER, OLD_LOADER], 24 => [SB_LOADER, OLD_LOADER], 29 => [OLD_LOADER, ''], 30 => [OLD_LOADER, ''] }.each do |hg_id, (applied, previous)|
+    hg = Hostgroup.unscoped.find(hg_id)
+    want = ROLLBACK ? previous : applied
+    have = hg.read_attribute(:pxe_loader).to_s
+    if have == want
+      puts "HOSTGROUP\t#{hg.title}\tunchanged\t#{want.inspect}"
+      next
+    end
+    unless DRY_RUN
+      hg.pxe_loader = want
+      hg.save!
+    end
+    puts "HOSTGROUP\t#{hg.title}\t#{have.inspect} -> #{want.inspect}"
+  end
+
+  # Hosts that store no loader follow their host group the next time Foreman
+  # rewrites their DHCP/TFTP records. Shim boots with Secure Boot on or off,
+  # so this is harmless, but list them so the change is visible.
+  Host::Managed.unscoped.where(hostgroup_id: Hostgroup.unscoped.find(22).subtree_ids + Hostgroup.unscoped.find(24).subtree_ids, pxe_loader: [nil, '']).order(:name).each do |h|
+    puts "INHERITS\t#{h.name}\thostgroup=#{h.hostgroup&.title}\teffective=#{h.pxe_loader.inspect}"
+  end
+end
+exit
