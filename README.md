@@ -243,13 +243,13 @@ RPM/Kubernetes groups that rely on the default).
 ## Proxmox VM firmware: EFI disk, Secure Boot and RNG at create time
 
 `foreman/setup_proxmox_firmware.rb` makes Foreman create Proxmox VMs with their
-EFI disk from the start, so the provisioning callback no longer has to add one
-after install with a stop/start cycle. For the Proxmox-Small and Proxmox-Medium
-compute profiles it sets `is_secure_boot=1` (foreman_fog_proxmox then creates
+EFI disk from the start, so the provisioning callbacks no longer have to add one
+after install. For the Proxmox-Small, Proxmox-Medium and both Kubernetes compute
+profiles it sets `is_secure_boot=1` (foreman_fog_proxmox then creates
 `efidisk0`: 4m, Microsoft keys pre-enrolled) and `rng0=source=/dev/urandom`.
 It also switches host groups AlmaLinux 9 (22) and AlmaLinux 10 (24) to the
-**Grub2 UEFI SecureBoot** PXE loader, and pins the Kubernetes host groups
-(29/30) to the old **Grub2 UEFI** loader until their profiles get the same change.
+**Grub2 UEFI SecureBoot** PXE loader; the Kubernetes host groups (29/30)
+inherit it from AlmaLinux 10.
 
 ```bash
 # on foreman.garaventaville.com, from the repo checkout

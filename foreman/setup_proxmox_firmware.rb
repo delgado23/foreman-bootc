@@ -19,9 +19,11 @@
 # of these compute profiles in the Foreman UI may drop it, so re-run this
 # script after any UI edit.
 #
-# The Kubernetes host groups (29/30) inherit their PXE loader from AlmaLinux 10
-# (24); they are pinned to "Grub2 UEFI" here so JT 50 builds don't change until
-# the k8s compute profiles get the same treatment.
+# The Kubernetes profiles get the same settings. Their host groups (29/30)
+# inherit the PXE loader from AlmaLinux 10 (24); the first version of this
+# script pinned them to "Grub2 UEFI", so they are set back to inherit here.
+# kubernetes-cluster-provisioning's proxmox_postconfig reads the VM config and
+# only adds efidisk0/rng0 when a profile did not create them.
 #
 # Run on Foreman (idempotent, prints before -> after):
 #   sudo foreman-rake console < foreman/setup_proxmox_firmware.rb
@@ -29,14 +31,14 @@
 #   { echo "ENV['FW_DRY_RUN']='1'"; cat foreman/setup_proxmox_firmware.rb; } | sudo foreman-rake console
 # Only some compute profiles, host groups untouched (e.g. a throwaway test copy):
 #   { echo "ENV['FW_PROFILES']='Proxmox-Small-SB-test'"; echo "ENV['FW_HOSTGROUPS']='0'"; cat foreman/setup_proxmox_firmware.rb; } | sudo foreman-rake console
-# Roll back to the previous state (Secure Boot off, no rng0, old loaders):
+# Roll back to the original state (Secure Boot off, no rng0, Grub2 UEFI everywhere):
 #   { echo "ENV['FW_ROLLBACK']='1'"; cat foreman/setup_proxmox_firmware.rb; } | sudo foreman-rake console
 # NB: foreman-rake console evaluates piped stdin line by line, so keep method
 # chains on one line (a leading-dot continuation would split them).
 User.current = User.unscoped.find_by!(login: 'admin')
 DRY_RUN  = ENV['FW_DRY_RUN'] == '1'
 ROLLBACK = ENV['FW_ROLLBACK'] == '1'
-PROFILES = (ENV['FW_PROFILES'] || 'Proxmox-Small,Proxmox-Medium').split(',').map(&:strip)
+PROFILES = (ENV['FW_PROFILES'] || 'Proxmox-Small,Proxmox-Medium,Kubernetes Worker Node,Kubernetes Controlplane Node').split(',').map(&:strip)
 DO_HOSTGROUPS = ENV['FW_HOSTGROUPS'] != '0'
 RNG0 = 'source=/dev/urandom'
 SB_LOADER = 'Grub2 UEFI SecureBoot'
@@ -78,7 +80,7 @@ end
 
 if DO_HOSTGROUPS
   # id => [loader when applied, loader when rolled back]; '' means inherit.
-  { 22 => [SB_LOADER, OLD_LOADER], 24 => [SB_LOADER, OLD_LOADER], 29 => [OLD_LOADER, ''], 30 => [OLD_LOADER, ''] }.each do |hg_id, (applied, previous)|
+  { 22 => [SB_LOADER, OLD_LOADER], 24 => [SB_LOADER, OLD_LOADER], 29 => ['', ''], 30 => ['', ''] }.each do |hg_id, (applied, previous)|
     hg = Hostgroup.unscoped.find(hg_id)
     want = ROLLBACK ? previous : applied
     have = hg.read_attribute(:pxe_loader).to_s
