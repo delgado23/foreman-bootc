@@ -31,13 +31,13 @@ def vm_attrs(bios: 'ovmf')
 end
 
 # The original state, before the script ever ran.
-def initial_state(plugin_version: '1.0.0', bios: 'ovmf')
+def initial_state(plugin_version: '1.0.0', bios: 'ovmf', bad_bios_profile: 4)
   {
     'plugin_version' => plugin_version,
     'compute_resources' => [{ 'id' => 1, 'name' => 'Proxmox' }],
     'compute_profiles' => PROFILES.merge(OTHER_PROFILE).map { |id, name| { 'id' => id, 'name' => name } },
     'compute_attributes' => PROFILES.merge(OTHER_PROFILE).keys.map do |id|
-      { 'compute_resource_id' => 1, 'compute_profile_id' => id, 'vm_attrs' => vm_attrs(bios: id == 4 ? bios : 'ovmf') }
+      { 'compute_resource_id' => 1, 'compute_profile_id' => id, 'vm_attrs' => vm_attrs(bios: id == bad_bios_profile ? bios : 'ovmf') }
     end,
     'hostgroups' => [
       { 'id' => 22, 'title' => 'AlmaLinux 9', 'parent_id' => nil, 'pxe_loader' => OLD },
@@ -131,17 +131,29 @@ Dir.mktmpdir do |dir|
         firmware(s) == { 4 => ['0', nil], 5 => ['0', nil], 6 => ['1', 'source=/dev/urandom'], 8 => ['0', nil] })
   check('FW_HOSTGROUPS=0 leaves host groups alone', loaders(s) == loaders(pristine) && !out.include?('HOSTGROUP'))
 
-  # 6. Guards abort before changing anything.
-  [['plugin 1.1.0', initial_state(plugin_version: '1.1.0'), 'not 1.0.x'],
-   ['plugin missing', initial_state.tap { |h| h.delete('plugin_version') }, 'not 1.0.x'],
-   ['bios not ovmf', initial_state(bios: 'seabios'), 'expected bios=ovmf']].each do |label, state, message|
+  # 6. Guards abort before changing anything, wherever the problem is: every
+  #    profile and host group is resolved and validated before the first write.
+  no_hg30 = initial_state.tap { |h| h['hostgroups'].reject! { |g| g['id'] == 30 } }
+  [['plugin 1.1.0', initial_state(plugin_version: '1.1.0'), {}, 'not 1.0.x'],
+   ['plugin missing', initial_state.tap { |h| h.delete('plugin_version') }, {}, 'not 1.0.x'],
+   ['bios not ovmf on the first profile', initial_state(bios: 'seabios', bad_bios_profile: 4), {}, 'Proxmox-Small: expected bios=ovmf'],
+   ['bios not ovmf on a later profile', initial_state(bios: 'seabios', bad_bios_profile: 6), {}, 'Kubernetes Worker Node: expected bios=ovmf'],
+   ['bios not ovmf on the last profile', initial_state(bios: 'seabios', bad_bios_profile: 8), {}, 'Kubernetes Controlplane Node: expected bios=ovmf'],
+   ['a later profile missing', initial_state, { 'FW_PROFILES' => 'Proxmox-Small,No Such Profile' }, 'record not found'],
+   ['a host group missing', no_hg30, {}, 'hostgroup 30 not found']].each do |label, state, env, message|
     File.write(path, JSON.generate(state))
-    out, st, s = run(path)
+    out, st, s = run(path, env)
     check("guard (#{label}): aborts non-zero", !st.success?)
     check("guard (#{label}): names the problem", out.include?(message))
-    # The bios guard trips on Proxmox-Small, the first profile, so nothing is written.
     check("guard (#{label}): state unchanged", s == state)
+    check("guard (#{label}): reports no change", !out.match?(/^(PROFILE|HOSTGROUP)\t/))
   end
+
+  # 7. A write that fails inside the transaction leaves nothing behind.
+  File.write(path, JSON.generate(pristine))
+  out, st, s = run(path, 'FAIL_HOSTGROUP_SAVE' => '1')
+  check('failed host group save: aborts non-zero', !st.success?)
+  check('failed host group save: profile writes rolled back', s == pristine)
 end
 
 puts

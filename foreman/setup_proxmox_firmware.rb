@@ -52,7 +52,11 @@ raise "foreman_fog_proxmox #{plugin.inspect} not 1.0.x; re-verify parsed_typed_c
 puts "VERSIONS\tforeman=#{SETTINGS[:version]}\tforeman_fog_proxmox=#{plugin}"
 
 cr = ComputeResource.unscoped.find_by!(name: 'Proxmox')
-PROFILES.each do |pname|
+
+# Resolve and validate everything before writing anything, so a bad or missing
+# profile or host group can't leave a partial change behind; the writes then
+# happen in one transaction.
+profile_plans = PROFILES.map do |pname|
   cp = ComputeProfile.unscoped.find_by!(name: pname)
   ca = ComputeAttribute.unscoped.find_by!(compute_resource_id: cr.id, compute_profile_id: cp.id)
   attrs = ca.vm_attrs.deep_dup
@@ -67,34 +71,43 @@ PROFILES.each do |pname|
     cfg['rng0'] = RNG0
   end
   after = { 'is_secure_boot' => cfg['is_secure_boot'], 'rng0' => cfg['rng0'] }
-  if before == after
-    puts "PROFILE\t#{pname}\tunchanged\t#{after.to_json}"
-    next
-  end
-  unless DRY_RUN
-    ca.vm_attrs = attrs
-    ca.save!
-  end
-  puts "PROFILE\t#{pname}\t#{before.to_json} -> #{after.to_json}"
+  { name: pname, ca: ca, attrs: attrs, before: before, after: after }
 end
 
-if DO_HOSTGROUPS
-  # id => [loader when applied, loader when rolled back]; '' means inherit.
-  { 22 => [SB_LOADER, OLD_LOADER], 24 => [SB_LOADER, OLD_LOADER], 29 => ['', ''], 30 => ['', ''] }.each do |hg_id, (applied, previous)|
-    hg = Hostgroup.unscoped.find(hg_id)
-    want = ROLLBACK ? previous : applied
-    have = hg.read_attribute(:pxe_loader).to_s
-    if have == want
-      puts "HOSTGROUP\t#{hg.title}\tunchanged\t#{want.inspect}"
+# id => [loader when applied, loader when rolled back]; '' means inherit.
+HG_LOADERS = { 22 => [SB_LOADER, OLD_LOADER], 24 => [SB_LOADER, OLD_LOADER], 29 => ['', ''], 30 => ['', ''] }
+hostgroup_plans = (DO_HOSTGROUPS ? HG_LOADERS : {}).map do |hg_id, (applied, previous)|
+  hg = Hostgroup.unscoped.find(hg_id)
+  { hg: hg, have: hg.read_attribute(:pxe_loader).to_s, want: ROLLBACK ? previous : applied }
+end
+
+ActiveRecord::Base.transaction do
+  profile_plans.each do |pl|
+    if pl[:before] == pl[:after]
+      puts "PROFILE\t#{pl[:name]}\tunchanged\t#{pl[:after].to_json}"
       next
     end
     unless DRY_RUN
-      hg.pxe_loader = want
-      hg.save!
+      pl[:ca].vm_attrs = pl[:attrs]
+      pl[:ca].save!
     end
-    puts "HOSTGROUP\t#{hg.title}\t#{have.inspect} -> #{want.inspect}"
+    puts "PROFILE\t#{pl[:name]}\t#{pl[:before].to_json} -> #{pl[:after].to_json}"
   end
 
+  hostgroup_plans.each do |pl|
+    if pl[:have] == pl[:want]
+      puts "HOSTGROUP\t#{pl[:hg].title}\tunchanged\t#{pl[:want].inspect}"
+      next
+    end
+    unless DRY_RUN
+      pl[:hg].pxe_loader = pl[:want]
+      pl[:hg].save!
+    end
+    puts "HOSTGROUP\t#{pl[:hg].title}\t#{pl[:have].inspect} -> #{pl[:want].inspect}"
+  end
+end
+
+if DO_HOSTGROUPS
   # Hosts that store no loader follow their host group the next time Foreman
   # rewrites their DHCP/TFTP records. Shim boots with Secure Boot on or off,
   # so this is harmless, but list them so the change is visible.

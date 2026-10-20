@@ -141,6 +141,21 @@ end
 
 # --- setup_proxmox_firmware.rb ----------------------------------------------
 
+# Inside Foreman this is a real database transaction; like the real thing, the
+# fake undoes the writes if the block raises (the state is restored from a
+# snapshot).
+module ActiveRecord
+  class Base
+    def self.transaction
+      snapshot = Marshal.load(Marshal.dump(STATE))
+      yield
+    rescue StandardError
+      STATE.replace(snapshot)
+      raise
+    end
+  end
+end
+
 # ActiveSupport provides Hash#deep_dup inside Foreman.
 class Hash
   def deep_dup
@@ -225,6 +240,7 @@ class Hostgroup
   end
 
   def save!
+    raise 'simulated host group save failure' if ENV['FAIL_HOSTGROUP_SAVE'] == '1'
     @row['pxe_loader'] = @pxe_loader
     true
   end
