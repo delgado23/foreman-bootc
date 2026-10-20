@@ -32,3 +32,6 @@ jobs:
 
       - name: setup_local_boot_template.rb behaviour
         run: ruby tests/test_setup_local_boot_template.rb
+
+      - name: setup_proxmox_firmware.rb behaviour
+        run: ruby tests/test_setup_proxmox_firmware.rb
