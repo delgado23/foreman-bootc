@@ -1,0 +1,21 @@
+name: Reciprocal review
+
+on:
+  pull_request:
+  pull_request_review:
+
+jobs:
+  reciprocal-review:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fetch pinned reciprocal-review policy
+        run: |
+          curl -fsS https://git.garaventaville.com/Garaventaville/homelab-bin/raw/commit/1b99801/gitea-cross-review-check -o /tmp/gitea-cross-review-check
+          echo "3c52b22d9dbd0e0011d65849b52d9f4587461777dbbc0d509be8c0c67c93b2d7  /tmp/gitea-cross-review-check" | sha256sum -c -
+      - name: Verify reciprocal agent approval
+        env:
+          GITEA_TOKEN: ${{ gitea.token }}
+          GITHUB_API_URL: ${{ gitea.api_url }}
+          GITHUB_EVENT_PATH: ${{ gitea.event_path }}
+          GITHUB_REPOSITORY: ${{ gitea.repository }}
+        run: python3 /tmp/gitea-cross-review-check
