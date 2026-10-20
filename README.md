@@ -30,6 +30,10 @@ foreman/
   set_unauth_pull.rb     move anonymous pull from Library (staging) to Production
   load_templates.rb      load both templates into Foreman + set as OS defaults
   setup_proxmox_firmware.rb  Proxmox profiles: efidisk + Secure Boot + rng0; shim PXE loader
+  setup_local_boot_template.rb  3 s clone of the locked PXEGrub2 local-boot template
+tests/
+  fake_foreman.rb        plain-Ruby stand-ins for the Foreman models the scripts touch
+  test_setup_local_boot_template.rb  behaviour tests (CI: .gitea/workflows/ci.yml)
   ops/                   one-off recovery/inspection scripts (incident reference)
                          (incl. inspect_content_view.rb — read-only CV/path report)
 main.yml                 Ansible playbook: weekly build/test/push of all images
@@ -281,6 +285,27 @@ Gotchas:
 - Hosts that store no PXE loader of their own inherit the host group's the next
   time Foreman rewrites their DHCP/TFTP records. That is harmless (shim boots
   with or without Secure Boot); the script lists those hosts.
+
+### Local-boot menu timeout
+
+Built hosts whose boot order puts the network first PXE on every reboot and get
+Foreman's local-boot GRUB config, which waited 20 s at its menu before booting
+the disk. The stock "PXEGrub2 default local boot" template is locked, so
+`foreman/setup_local_boot_template.rb` clones it with only the timeout changed
+("PXEGrub2 local boot (3s timeout)") and points the `local_boot_PXEGrub2`
+setting at the clone. A host or global parameter named `local_boot_PXEGrub2`
+would override the setting; the script reports any.
+
+```bash
+{ echo "ENV['LB_DRY_RUN']='1'"; cat foreman/setup_local_boot_template.rb; } | sudo foreman-rake console  # plan only
+sudo foreman-rake console < foreman/setup_local_boot_template.rb                                     # apply (idempotent)
+{ echo "ENV['LB_ROLLBACK']='1'"; cat foreman/setup_local_boot_template.rb; } | sudo foreman-rake console  # back to stock
+```
+
+- **New TFTP configs only:** a host's TFTP config is rendered when it is built,
+  so existing hosts keep the 20 s menu until Foreman rewrites theirs.
+- **Re-run after upgrades:** the clone is derived from the stock template on each
+  run, so re-run the script after a Foreman upgrade changes the stock one.
 
 ## bootc hosts can't be configured via %post — bake it into the image
 
